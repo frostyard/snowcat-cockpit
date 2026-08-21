@@ -132,6 +132,12 @@ Snowcat proposal admission, prioritization, requeue, and other authoritative
 queue mutations remain in Snowcat's operator surface. Cockpit links there
 rather than reproducing those controls.
 
+Phase 4's accepted [queue-observation decision](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
+adds only an operator-triggered, bounded `list_work` projection for planning a
+single fleet batch. It introduces no poller, refill loop, queue copy, or
+worker-side lease handling; Snowcat remains authoritative when each launched
+worker claims.
+
 ## Operational notes
 
 - Start the node from the complete environment needed by host workers.

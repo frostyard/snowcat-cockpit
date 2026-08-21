@@ -19,6 +19,7 @@ in [org-adrs.md](org-adrs.md).
 - [0001 — Keep the cockpit outside Snowcat](adr/0001-keep-cockpit-outside-snowcat.md)
 - [0002 — Build a node-local Cockpit appliance](adr/0002-build-a-node-local-cockpit-appliance.md)
 - [0003 — Isolate each managed worker terminal](adr/0003-isolate-each-managed-worker-terminal.md)
+- [0004 — Observe Snowcat once to plan bounded fleets](adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
 
 ### Design
 

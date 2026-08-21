@@ -92,6 +92,8 @@ selector or claim queue work itself.
 
 ## Phase 4 — Launch bounded fleets
 
+- Decide the one-shot observation and credential boundary in
+  [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md).
 - Add explicit discoverer, implementer, and reviewer batch controls.
 - Derive exact claim kinds from a bounded live queue snapshot and the selected
   role; flag suspicious authority such as change work lacking `open-pr`.
@@ -146,3 +148,4 @@ to reconcile Snowcat completion with provider-process state.
 - Implements: [node architecture](../design/node.md),
   [node CLI and HTTP API](../specs/node-api.md)
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md)
+- Queue observation: [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
