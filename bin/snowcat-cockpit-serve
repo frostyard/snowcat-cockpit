@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly PROGRAM_NAME="${0##*/}"
+readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly MCP_URL="https://snowcat.goat-snake.ts.net/mcp"
+
+CREDENTIAL_FILE="${SNOWCAT_COCKPIT_OBSERVER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/observer-token.env}"
+COCKPIT_BIN="${SNOWCAT_COCKPIT_BIN:-$PROJECT_ROOT/dist/snowcat-cockpit}"
+
+die() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
+  exit 1
+}
+
+file_stat() {
+  local format_linux=$1
+  local format_darwin=$2
+  local path=$3
+  stat -c "$format_linux" -- "$path" 2>/dev/null || stat -f "$format_darwin" "$path" 2>/dev/null
+}
+
+[[ -f "$CREDENTIAL_FILE" ]] || die "observer credential file is missing: $CREDENTIAL_FILE"
+[[ ! -L "$CREDENTIAL_FILE" ]] || die "observer credential file must not be a symbolic link"
+
+credential_mode="$(file_stat '%a' '%Lp' "$CREDENTIAL_FILE")" || die "cannot inspect observer credential permissions"
+[[ "$credential_mode" == "600" ]] || die "observer credential file must have mode 0600 (found $credential_mode)"
+
+credential_owner="$(file_stat '%u' '%u' "$CREDENTIAL_FILE")" || die "cannot inspect observer credential owner"
+[[ "$credential_owner" == "$(id -u)" ]] || die "observer credential file must be owned by the current user"
+
+observer_token=""
+while IFS= read -r line || [[ -n "$line" ]]; do
+  case "$line" in
+    'export SNOWCAT_OBSERVER_TOKEN='*)
+      [[ -z "$observer_token" ]] || die "observer credential file declares SNOWCAT_OBSERVER_TOKEN more than once"
+      observer_token="${line#export SNOWCAT_OBSERVER_TOKEN=}"
+      ;;
+  esac
+done <"$CREDENTIAL_FILE"
+
+[[ "$observer_token" =~ ^snowcat_[[:alnum:]_-]+$ ]] || die "observer credential file has an invalid SNOWCAT_OBSERVER_TOKEN"
+[[ -x "$COCKPIT_BIN" ]] || die "Cockpit binary is not executable: $COCKPIT_BIN (run make build)"
+
+export SNOWCAT_COCKPIT_MCP_URL="$MCP_URL"
+export SNOWCAT_COCKPIT_MCP_TOKEN="$observer_token"
+unset observer_token SNOWCAT_OBSERVER_TOKEN
+
+exec "$COCKPIT_BIN" serve "$@"

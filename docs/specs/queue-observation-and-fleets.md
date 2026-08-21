@@ -21,6 +21,23 @@ with the synthetic, never-seeded claim-kind restriction
 `cockpit-observer-no-claim`. Cockpit invokes only `list_work`; this compatibility
 restriction does not claim to be a complete authorization boundary.
 
+## Local launch wrapper
+
+`bin/snowcat-cockpit-serve [serve options]` MUST:
+
+- read `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/observer-token.env`, unless a
+  test supplies `SNOWCAT_COCKPIT_OBSERVER_ENV`;
+- require a regular, non-symlink credential file owned by the current user
+  with mode `0600`;
+- parse only one literal `export SNOWCAT_OBSERVER_TOKEN=<token>` declaration
+  and MUST NOT evaluate the file as shell code;
+- set `SNOWCAT_COCKPIT_MCP_URL` to
+  `https://snowcat.goat-snake.ts.net/mcp`;
+- map the value to `SNOWCAT_COCKPIT_MCP_TOKEN`, remove
+  `SNOWCAT_OBSERVER_TOKEN`, and use `exec` with preserved argument boundaries;
+- run `dist/snowcat-cockpit serve`, unless a test supplies
+  `SNOWCAT_COCKPIT_BIN`.
+
 ## HTTP interface
 
 | Method | Path | Result |

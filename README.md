@@ -63,6 +63,17 @@ dashboard observes only when you press **Observe once** or launch a fleet. A
 fleet is capped to eligible work and 12 workers, launches once, and never
 refills.
 
+For the standard local observer file at
+`~/.config/snowcat/observer-token.env`, build once and use the checked-in
+wrapper. It verifies mode `0600`, reads only the expected export, fixes the MCP
+URL to `https://snowcat.goat-snake.ts.net/mcp`, and removes the source variable
+before starting Cockpit:
+
+```bash
+make build
+bin/snowcat-cockpit-serve --listen 127.0.0.1:7682
+```
+
 Open `http://127.0.0.1:7682`. The node creates only a stable, non-secret ID
 under `${XDG_STATE_HOME:-$HOME/.local/state}/snowcat-cockpit`. It refuses a
 non-loopback listen address. A provider's launch control is enabled only while
