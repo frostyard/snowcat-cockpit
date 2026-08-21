@@ -1,0 +1,114 @@
+# Spec: Managed workers
+
+This contract governs one Cockpit-owned host worker launch, its isolated Git
+worktree, retained tmux terminal, local lifecycle record, and explicit stop and
+cleanup operations. The node CLI, HTTP API, and dashboard consume the same
+manager.
+
+## Interface
+
+A launch request contains:
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `provider` | string | yes | Exact `codex`, `claude`, or `copilot`; its current profile is `ready` |
+| `role` | string | yes | Exact `discoverer`, `implementer`, or `reviewer` |
+| `repository` | string | yes | Snowcat `owner/name` slug |
+| `source` | string | yes | Existing local Git working tree used only as the worktree source |
+| `baseRef` | string | no | Local commit-ish to verify; defaults to `HEAD` |
+
+The manager returns a non-secret record:
+
+```json
+{
+  "version": 1,
+  "id": "worker-<hex>",
+  "nodeId": "node-<hex>",
+  "provider": "claude",
+  "role": "implementer",
+  "repository": "frostyard/firn",
+  "source": "/absolute/source",
+  "workspace": "/state/workspaces/worker-<hex>/checkout",
+  "baseRef": "HEAD",
+  "baseCommit": "<commit>",
+  "branch": "cockpit/worker-<hex>",
+  "status": "allocating|running|exited|failed|stopped|cleaned",
+  "createdAt": "RFC3339",
+  "startedAt": "RFC3339 or omitted",
+  "stoppedAt": "RFC3339 or omitted",
+  "cleanedAt": "RFC3339 or omitted",
+  "detail": "short non-secret lifecycle detail"
+}
+```
+
+CLI operations:
+
+```text
+snowcat-cockpit workers [--json] [--state-dir <directory>]
+snowcat-cockpit worker launch --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+snowcat-cockpit worker attach [--state-dir <directory>] <worker-id>
+snowcat-cockpit worker stop [--state-dir <directory>] <worker-id>
+snowcat-cockpit worker cleanup [--state-dir <directory>] <worker-id>
+```
+
+HTTP operations:
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/api/v1/workers` | Current records reconciled with tmux |
+| `POST` | `/api/v1/workers` | Launch one worker from a JSON request |
+| `POST` | `/api/v1/workers/{id}/stop` | Stop that worker's tmux server |
+| `POST` | `/api/v1/workers/{id}/console` | Start or reuse one loopback ttyd console and return its local URL |
+| `DELETE` | `/api/v1/workers/{id}` | Clean a non-running worker workspace |
+
+## Rules
+
+1. Launch MUST create a unique branch and Git worktree beneath the configured
+   Cockpit state directory; it MUST NOT clone, fetch, pull, or mutate Snowcat.
+2. Launch MUST install the locked skills into `.agents/skills` and
+   `.claude/skills` in the isolated worktree and hide only those Cockpit-owned
+   paths from the worker's Git commands through process-local Git configuration.
+3. The role prompt MUST identify the stable worker ID, select only the role's
+   exact bounded kinds, claim at most one item, and tell the provider to stop
+   after reporting the result. A discoverer MUST remain read-only, select only
+   `*-discovery`, and declare `requiredArtifact` on every proposed child. An
+   implementer MUST release a claimed change item before substantive work when
+   `open-pr` is absent; the role requires a deliverable pull-request artifact
+   and never widens the item's authority.
+4. Each worker MUST use the dedicated tmux topology from
+   [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md) with
+   `remain-on-exit` enabled before the provider starts.
+5. Cockpit MUST preserve argv boundaries, MUST NOT use `eval`, and MUST NOT put
+   inherited environment values into tmux arguments, logs, records, or API
+   responses.
+6. A launch record MUST contain no provider credential, MCP credential, lease
+   token, terminal content, provider output, environment dump, or Snowcat queue
+   record.
+7. Stop MUST address one exact worker and MUST retain its workspace and record.
+8. Cleanup MUST be explicit, MUST refuse a running or dirty workspace, MUST
+   remove only byte-matching Cockpit skill files, and MUST retain a `cleaned`
+   lifecycle record. It MUST NOT delete the worker branch.
+9. Failed allocation or launch MUST remain recorded and MUST NOT trigger
+   automatic worktree or terminal deletion.
+10. A launch is local process creation, not evidence that Snowcat work was
+    claimed or completed.
+11. The dashboard console MUST bind ttyd to the platform loopback interface,
+    MUST allow at most one writable client, MUST attach only to the selected
+    worker socket, and MUST stop with the Cockpit node without stopping tmux.
+    Cockpit MUST NOT proxy, capture, or persist its terminal contents.
+
+## Derived artifacts
+
+| Artifact | Derivation |
+| --- | --- |
+| Worker role prompt | Worker ID, repository, and locked profile role |
+| Workspace branch | `cockpit/<worker-id>` |
+| tmux socket | Private short runtime directory plus node and worker IDs |
+| Dashboard worker inventory | `GET /api/v1/workers` |
+
+## References
+
+- Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
+  [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md)
+- Context: [Cockpit node](../design/node.md)
+- Built in: [Production roadmap, Phase 3](../plans/0002-production-roadmap.md#phase-3--launch-one-managed-worker)

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Snowcat Cockpit</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="ph-shell">
+    <aside class="ph-sidebar">
+      <a class="ph-brand" href="/" aria-label="Snowcat Cockpit home">
+        <span class="flake" aria-hidden="true">❄</span>
+        <span><strong>Snowcat cockpit</strong><small>fleet command</small></span>
+      </a>
+
+      <div class="ph-node-picker">
+        <label>Node</label>
+        <div id="side-node">connecting</div>
+      </div>
+
+      <nav class="ph-nav" aria-label="Cockpit sections">
+        <div class="ph-nav-group">Console</div>
+        <a class="ph-nav-link active" href="#overview"><span class="ph-nav-num">01</span>Overview</a>
+        <a class="ph-nav-link" href="#fleet"><span class="ph-nav-num">02</span>Fleet</a>
+        <a class="ph-nav-link" href="#readiness"><span class="ph-nav-num">03</span>Readiness</a>
+        <div class="ph-nav-group">Inventory</div>
+        <a class="ph-nav-link" href="#profiles"><span class="ph-nav-num">04</span>Profiles</a>
+        <a class="ph-nav-link" href="#workers"><span class="ph-nav-num">05</span>Workers</a>
+        <span class="ph-nav-link disabled"><span class="ph-nav-num">06</span>Workspaces</span>
+      </nav>
+
+      <div class="ph-side-foot">
+        <span class="ph-boundary-dot"></span>
+        <div><strong>Local boundary</strong><small>loopback only</small></div>
+      </div>
+    </aside>
+
+    <main class="ph-main">
+      <header class="ph-topbar">
+        <div>
+          <div class="ph-eyebrow"><i></i><span id="node-subtitle">local execution node</span><span class="ph-node-mobile">local execution node</span></div>
+          <h1>System overview</h1>
+        </div>
+        <div class="ph-topbar-actions">
+          <div class="ph-live"><span id="node-pulse"></span><b id="node-status">Connecting</b></div>
+          <button class="ph-button secondary" id="refresh" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <div class="ph-grid" id="overview">
+        <section class="ph-hero ph-span-full">
+          <div class="ph-hero-grid" aria-hidden="true"></div>
+          <div class="ph-hero-kicker"><span></span>Snowcat remains authoritative</div>
+          <h2>Keep the work bounded. <em>Move with intent.</em></h2>
+          <p>Cockpit owns this machine's execution capacity and retained workspaces. Workers claim directly through Snowcat MCP; lease tokens never enter node state.</p>
+          <dl class="ph-facts">
+            <div><dt>Node</dt><dd id="node-id">—</dd></div>
+            <div><dt>Version</dt><dd id="node-version">—</dd></div>
+            <div><dt>Uptime</dt><dd id="node-uptime">—</dd></div>
+          </dl>
+        </section>
+
+        <section class="ph-card ph-metric ph-span-third">
+          <div class="ph-card-heading"><h2>Core runtime</h2></div>
+          <div class="ph-metric-row"><strong id="core-ready">—</strong><span>of 2 ready</span></div>
+          <div class="ph-meter"><span id="core-meter"></span></div>
+          <div class="ph-metric-foot"><span>git · tmux</span><span id="core-state">checking</span></div>
+        </section>
+        <section class="ph-card ph-metric ph-span-third">
+          <div class="ph-card-heading"><h2>Providers</h2></div>
+          <div class="ph-metric-row"><strong id="provider-ready">—</strong><span>of 3 detected</span></div>
+          <div class="ph-meter"><span id="provider-meter"></span></div>
+          <div class="ph-metric-foot"><span>codex · claude · copilot</span><span>host</span></div>
+        </section>
+        <section class="ph-card ph-metric ph-span-third">
+          <div class="ph-card-heading"><h2>Execution adapters</h2></div>
+          <div class="ph-metric-row"><strong id="adapter-ready">—</strong><span>of 2 detected</span></div>
+          <div class="ph-meter"><span id="adapter-meter"></span></div>
+          <div class="ph-metric-foot"><span>podman · docker</span><span>optional</span></div>
+        </section>
+
+        <section class="ph-card ph-span-third" id="fleet">
+          <div class="ph-card-heading split">
+            <div><span class="ph-index">01</span><h2>Discoverers</h2><p>Read lane · exact <code>*-discovery</code></p></div>
+            <span class="ph-badge" id="discoverer-profile-state">checking profile</span>
+          </div>
+          <div class="ph-fleet-copy">
+            <strong>Turn evidence into bounded proposals.</strong>
+            <p>Read-only workers inspect one gap, declare its delivery contract, and leave admission to the operator.</p>
+          </div>
+          <button class="ph-button ph-launch" id="launch-discoverer" data-role="discoverer" type="button" disabled>Launch one discoverer <span>→</span></button>
+        </section>
+        <section class="ph-card ph-span-third">
+          <div class="ph-card-heading split">
+            <div><span class="ph-index">02</span><h2>Implementers</h2><p>Build lane · exact implementation kinds</p></div>
+            <span class="ph-badge" id="implementer-profile-state">checking profile</span>
+          </div>
+          <div class="ph-fleet-copy">
+            <strong>Work only what can be delivered.</strong>
+            <p>Isolated checkout, canonical queue skill, validated MCP, and authority checked before launch.</p>
+          </div>
+          <button class="ph-button ph-launch" id="launch-implementer" data-role="implementer" type="button" disabled>Launch one implementer <span>→</span></button>
+        </section>
+        <section class="ph-card ph-span-third">
+          <div class="ph-card-heading split">
+            <div><span class="ph-index">03</span><h2>Reviewers</h2><p>Review lane · exact <code>pr-review</code></p></div>
+            <span class="ph-badge" id="reviewer-profile-state">checking profile</span>
+          </div>
+          <div class="ph-fleet-copy">
+            <strong>Keep the review independent.</strong>
+            <p>Reviewer profiles preserve Snowcat's different-model contract and report structured findings directly.</p>
+          </div>
+          <button class="ph-button ph-launch" id="launch-reviewer" data-role="reviewer" type="button" disabled>Launch one reviewer <span>→</span></button>
+        </section>
+
+        <section class="ph-card ph-table-card ph-span-full" id="workers">
+          <div class="ph-table-toolbar">
+            <div><h2>Managed workers</h2><span id="workers-summary">Loading retained terminals and workspaces</span></div>
+            <span class="ph-badge" id="workers-badge">checking</span>
+          </div>
+          <div class="ph-table-wrap">
+            <table class="ph-table">
+              <thead><tr><th>Worker</th><th>State</th><th>Provider</th><th>Role</th><th>Repository</th><th>Workspace</th><th>Actions</th></tr></thead>
+              <tbody id="workers-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="ph-card ph-table-card ph-span-full" id="profiles">
+          <div class="ph-table-toolbar">
+            <div><h2>Worker profiles</h2><span id="kit-summary">Checking the locked Snowcat worker kit</span></div>
+            <span class="ph-badge" id="kit-badge">checking</span>
+          </div>
+          <div class="ph-table-wrap">
+            <table class="ph-table">
+              <thead><tr><th>Provider</th><th>Executable</th><th>Worker kit</th><th>Snowcat MCP</th><th>Roles</th><th>Readiness</th></tr></thead>
+              <tbody id="profiles-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="ph-card ph-table-card ph-span-full" id="readiness">
+          <div class="ph-table-toolbar">
+            <div><h2>Machine readiness</h2><span id="readiness-summary">Inspecting local tools · no work claimed</span></div>
+            <span class="ph-badge" id="readiness-badge">checking</span>
+          </div>
+          <div class="ph-table-wrap">
+            <table class="ph-table">
+              <thead><tr><th>Capability</th><th>Category</th><th>Requirement</th><th>State</th><th>Detail</th></tr></thead>
+              <tbody id="checks"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="ph-card ph-boundary-card ph-span-full">
+          <div class="ph-card-heading"><h2>Clear boundaries</h2></div>
+          <div class="ph-boundary-grid">
+            <div><span>01</span><strong>Node local</strong><small>identity · process health · readiness</small></div>
+            <div><span>02</span><strong>Snowcat remote</strong><small>queue truth · selection · leases</small></div>
+            <div><span>03</span><strong>Worker held</strong><small>provider auth · MCP auth · lease token</small></div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="ph-footer">
+        <span>Snowcat cockpit · node-local control surface</span>
+        <span>Workspaces remain until explicit cleanup</span>
+      </footer>
+    </main>
+  </div>
+
+  <dialog class="ph-dialog" id="launch-dialog" aria-labelledby="launch-title">
+    <form class="ph-form" id="launch-form">
+      <div class="ph-dialog-head">
+        <div><span class="ph-index">Phase 3</span><h2 id="launch-title">Launch one managed worker</h2></div>
+        <button class="ph-icon-button" id="launch-close" type="button" aria-label="Close launch dialog">×</button>
+      </div>
+      <p class="ph-form-intro">Cockpit creates one retained Git worktree and terminal. The worker claims directly through Snowcat and stops after at most one item.</p>
+      <input id="launch-role" name="role" type="hidden">
+      <div class="ph-form-grid">
+        <label>Provider<select id="launch-provider" name="provider" required></select></label>
+        <label>Repository<input id="launch-repository" name="repository" type="text" placeholder="frostyard/firn" pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" required></label>
+        <label class="wide">Local Git source<input id="launch-source" name="source" type="text" placeholder="/absolute/path/to/checkout" required></label>
+        <label>Base ref<input id="launch-base-ref" name="baseRef" type="text" value="HEAD" required></label>
+        <div class="ph-form-boundary"><span>Inherited only</span><strong>Provider auth · MCP auth · permissions</strong></div>
+      </div>
+      <p class="ph-form-message" id="launch-message" role="status"></p>
+      <div class="ph-dialog-actions">
+        <button class="ph-button secondary" id="launch-cancel" type="button">Cancel</button>
+        <button class="ph-button" id="launch-submit" type="submit">Launch worker</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

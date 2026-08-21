@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly PROGRAM_NAME="${0##*/}"
+readonly SOCKET_NAME="${SNOWCAT_COCKPIT_SOCKET:-snowcat-cockpit}"
+readonly SESSION_NAME="${SNOWCAT_COCKPIT_SESSION:-cockpit}"
+readonly TTYD_INTERFACE_OVERRIDE="${SNOWCAT_COCKPIT_TTYD_INTERFACE:-}"
+
+TMUX_BIN="${SNOWCAT_COCKPIT_TMUX:-}"
+TTYD_BIN="${SNOWCAT_COCKPIT_TTYD:-}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  snowcat-cockpit start <slot> <working-directory> -- <command> [argument ...]
+  snowcat-cockpit work <slot> <codex|claude|copilot> <working-directory> <owner/repo> [kind]
+  snowcat-cockpit list
+  snowcat-cockpit attach
+  snowcat-cockpit stop <slot>
+  snowcat-cockpit web [port]
+  snowcat-cockpit help
+
+The cockpit owns only a dedicated tmux server. Coding agents keep their normal
+credentials and Snowcat MCP configuration.
+EOF
+}
+
+die() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
+  exit 1
+}
+
+resolve_tmux() {
+  if [[ -n "$TMUX_BIN" ]]; then
+    TMUX_BIN="$(command -v -- "$TMUX_BIN" 2>/dev/null || true)"
+  else
+    TMUX_BIN="$(command -v tmux 2>/dev/null || true)"
+  fi
+  [[ -n "$TMUX_BIN" ]] || die "tmux is required"
+}
+
+resolve_ttyd() {
+  if [[ -n "$TTYD_BIN" ]]; then
+    TTYD_BIN="$(command -v -- "$TTYD_BIN" 2>/dev/null || true)"
+  else
+    TTYD_BIN="$(command -v ttyd 2>/dev/null || true)"
+  fi
+  [[ -n "$TTYD_BIN" ]] || die "ttyd is required for browser access"
+}
+
+loopback_interface() {
+  if [[ -n "$TTYD_INTERFACE_OVERRIDE" ]]; then
+    [[ "$TTYD_INTERFACE_OVERRIDE" =~ ^[[:alnum:]_.:-]+$ ]] || \
+      die "invalid ttyd interface: $TTYD_INTERFACE_OVERRIDE"
+    printf '%s\n' "$TTYD_INTERFACE_OVERRIDE"
+    return 0
+  fi
+
+  case "$(uname -s)" in
+    Linux)
+      printf 'lo\n'
+      ;;
+    Darwin)
+      printf 'lo0\n'
+      ;;
+    *)
+      die "set SNOWCAT_COCKPIT_TTYD_INTERFACE to the platform loopback interface"
+      ;;
+  esac
+}
+
+valid_slot() {
+  [[ "$1" =~ ^[[:alnum:]][[:alnum:]._-]{0,31}$ ]]
+}
+
+require_slot() {
+  valid_slot "$1" || die "invalid slot '$1' (use 1-32 letters, digits, '.', '_', or '-')"
+}
+
+valid_repository() {
+  [[ "$1" =~ ^[[:alnum:]._-]+/[[:alnum:]._-]+$ ]]
+}
+
+valid_kind() {
+  [[ "$1" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ ]]
+}
+
+canonical_directory() {
+  local directory=$1
+  [[ -d "$directory" ]] || die "working directory does not exist: $directory"
+  (cd -- "$directory" && pwd -P)
+}
+
+session_exists() {
+  "$TMUX_BIN" -L "$SOCKET_NAME" has-session -t "$SESSION_NAME" 2>/dev/null
+}
+
+slot_exists() {
+  local wanted=$1
+  local existing
+
+  session_exists || return 1
+  while IFS= read -r existing; do
+    [[ "$existing" == "$wanted" ]] && return 0
+  done < <("$TMUX_BIN" -L "$SOCKET_NAME" list-windows -t "$SESSION_NAME" -F '#{window_name}')
+  return 1
+}
+
+shell_command() {
+  local serialized=""
+  local argument
+  local quoted
+
+  for argument in "$@"; do
+    printf -v quoted '%q' "$argument"
+    serialized+="${serialized:+ }${quoted}"
+  done
+  printf '%s\n' "$serialized"
+}
+
+start_slot() {
+  local slot=$1
+  local requested_directory=$2
+  shift 2
+
+  require_slot "$slot"
+  [[ $# -gt 0 ]] || die "start requires a command"
+  resolve_tmux
+
+  local directory
+  local command_line
+  directory="$(canonical_directory "$requested_directory")"
+  command_line="$(shell_command "$@")"
+
+  slot_exists "$slot" && die "slot already exists: $slot"
+
+  # Create a live placeholder first so remain-on-exit is set before a very
+  # short command can finish and make tmux discard its window.
+  local placeholder='while :; do sleep 3600; done'
+  if session_exists; then
+    "$TMUX_BIN" -L "$SOCKET_NAME" new-window -d \
+      -t "$SESSION_NAME:" -n "$slot" -c "$directory" "$placeholder"
+  else
+    "$TMUX_BIN" -L "$SOCKET_NAME" new-session -d \
+      -s "$SESSION_NAME" -n "$slot" -c "$directory" "$placeholder"
+  fi
+
+  "$TMUX_BIN" -L "$SOCKET_NAME" set-window-option \
+    -t "$SESSION_NAME:$slot" remain-on-exit on >/dev/null
+  "$TMUX_BIN" -L "$SOCKET_NAME" set-window-option \
+    -t "$SESSION_NAME:$slot" allow-rename off >/dev/null
+
+  if ! "$TMUX_BIN" -L "$SOCKET_NAME" respawn-pane -k \
+    -t "$SESSION_NAME:$slot" "$command_line"; then
+    "$TMUX_BIN" -L "$SOCKET_NAME" kill-window -t "$SESSION_NAME:$slot" 2>/dev/null || true
+    die "failed to start slot: $slot"
+  fi
+
+  printf 'started %s in %s\n' "$slot" "$directory"
+}
+
+work_slot() {
+  local slot=$1
+  local provider=$2
+  local directory=$3
+  local repository=$4
+  local kind=${5:-}
+
+  valid_repository "$repository" || die "invalid repository '$repository' (expected owner/repo)"
+  if [[ -n "$kind" ]]; then
+    valid_kind "$kind" || die "invalid work kind: $kind"
+  fi
+
+  local provider_bin
+  provider_bin="$(command -v -- "$provider" 2>/dev/null || true)"
+  [[ -n "$provider_bin" ]] || die "provider executable is not installed: $provider"
+
+  local prompt
+  if [[ -n "$kind" ]]; then
+    printf -v prompt 'Work the Snowcat queue for %s, %s items only. Claim at most one item, then stop.' \
+      "$repository" "$kind"
+  else
+    printf -v prompt 'Work the Snowcat queue for %s. Claim at most one item, then stop.' \
+      "$repository"
+  fi
+
+  case "$provider" in
+    codex|claude)
+      start_slot "$slot" "$directory" "$provider_bin" "$prompt"
+      ;;
+    copilot)
+      start_slot "$slot" "$directory" "$provider_bin" -i "$prompt"
+      ;;
+    *)
+      die "unsupported provider: $provider (expected codex, claude, or copilot)"
+      ;;
+  esac
+}
+
+list_slots() {
+  resolve_tmux
+  if ! session_exists; then
+    printf 'no cockpit slots\n'
+    return 0
+  fi
+
+  printf 'SLOT | STATUS | COMMAND | PATH\n'
+  "$TMUX_BIN" -L "$SOCKET_NAME" list-windows -t "$SESSION_NAME" \
+    -F '#{window_name} | #{?pane_dead,exited,running} | #{pane_current_command} | #{pane_current_path}'
+}
+
+attach_console() {
+  resolve_tmux
+  session_exists || die "no cockpit session; start a slot first"
+  exec "$TMUX_BIN" -L "$SOCKET_NAME" attach-session -t "$SESSION_NAME"
+}
+
+stop_slot() {
+  local slot=$1
+  require_slot "$slot"
+  resolve_tmux
+  slot_exists "$slot" || die "slot does not exist: $slot"
+  "$TMUX_BIN" -L "$SOCKET_NAME" kill-window -t "$SESSION_NAME:$slot"
+  printf 'stopped %s\n' "$slot"
+}
+
+web_console() {
+  local port=${1:-7681}
+  [[ "$port" =~ ^[0-9]+$ ]] || die "port must be an integer"
+  ((port >= 1 && port <= 65535)) || die "port must be between 1 and 65535"
+
+  resolve_tmux
+  session_exists || die "no cockpit session; start a slot first"
+  resolve_ttyd
+
+  local interface
+  interface="$(loopback_interface)"
+
+  exec "$TTYD_BIN" -i "$interface" -p "$port" -W -O -m 1 \
+    "$TMUX_BIN" -L "$SOCKET_NAME" attach-session -t "$SESSION_NAME"
+}
+
+main() {
+  local command=${1:-help}
+  [[ $# -eq 0 ]] || shift
+
+  case "$command" in
+    start)
+      [[ $# -ge 4 ]] || die "start requires <slot> <working-directory> -- <command> [arguments]"
+      local slot=$1
+      local directory=$2
+      [[ "$3" == "--" ]] || die "start requires '--' before the command"
+      shift 3
+      start_slot "$slot" "$directory" "$@"
+      ;;
+    work)
+      [[ $# -ge 4 && $# -le 5 ]] || die "work requires <slot> <provider> <working-directory> <owner/repo> [kind]"
+      work_slot "$@"
+      ;;
+    list)
+      [[ $# -eq 0 ]] || die "list takes no arguments"
+      list_slots
+      ;;
+    attach)
+      [[ $# -eq 0 ]] || die "attach takes no arguments"
+      attach_console
+      ;;
+    stop)
+      [[ $# -eq 1 ]] || die "stop requires <slot>"
+      stop_slot "$1"
+      ;;
+    web)
+      [[ $# -le 1 ]] || die "web accepts only an optional port"
+      web_console "${1:-7681}"
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      usage >&2
+      die "unknown command: $command"
+      ;;
+  esac
+}
+
+main "$@"
