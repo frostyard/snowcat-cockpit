@@ -108,6 +108,11 @@ separately specified ephemeral boundary. Rootless Podman is preferred when it
 is available; Docker is supported explicitly rather than selected as a claim
 about stronger isolation.
 
+The projection and unattended-permission boundary is recorded in
+[ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md). Until it
+is implemented, every launch uses the interactive host adapter and inherits its
+permission and directory-trust posture.
+
 The dashboard and state model do not depend on which adapter owns a worker.
 
 ## Dashboard
@@ -169,4 +174,5 @@ operator may inspect or explicitly stop the retained terminal.
 - Profile contract: [worker profiles and locked skill kit](../specs/worker-profiles.md)
 - Live readiness contract: [provider preflight](../specs/provider-preflight.md)
 - Queue and batch contract: [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md)
+- OCI boundary: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
 - Built in: [production roadmap](../plans/0002-production-roadmap.md)

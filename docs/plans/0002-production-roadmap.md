@@ -151,6 +151,8 @@ operator inference, remains before Phase 4 is complete.
 
 ## Phase 5 — Harden container delivery
 
+- Decide the unattended permission and ephemeral configuration boundary in
+  [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md).
 - Publish pinned multi-architecture worker images running as non-root.
 - Prefer rootless Podman and test Docker explicitly.
 - Add ephemeral provider-configuration projection and startup diagnostics.
