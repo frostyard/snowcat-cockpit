@@ -140,6 +140,17 @@ worker claims. The exact projection, role classifier, contract warning, and
 12-worker batch ceiling are defined by the
 [queue and fleet contract](../specs/queue-observation-and-fleets.md).
 
+Worker lifecycle and work-attempt lifecycle are deliberately distinct. A
+`running` worker record means that its provider process is still alive; it does
+not assert that the provider holds a Snowcat lease or is still performing work.
+The two-node Phase 4 trial proved that Snowcat grants one lease when independent
+nodes race for one item, while also proving that interactive Codex and Copilot
+TUIs may stay alive after completion or a no-work result. Cockpit does not infer
+an outcome from an idle terminal, repository and kind, or event timing. Exact
+reconciliation waits for Snowcat's bounded read-only attempt projection tracked
+by [snowcat#192](https://github.com/frostyard/snowcat/issues/192); until then the
+operator may inspect or explicitly stop the retained terminal.
+
 ## Operational notes
 
 - Start the node from the complete environment needed by host workers.

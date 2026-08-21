@@ -127,8 +127,27 @@ allocation failure, retains every created workspace, and never refills.
 Snowcat issues [#191](https://github.com/frostyard/snowcat/issues/191) and
 [#192](https://github.com/frostyard/snowcat/issues/192) track the remaining
 server-side observer scope and lifecycle-correlation contracts.
-Completed-terminal reconciliation and the two-node arbitration trial remain
-before Phase 4 is complete.
+
+The two-node arbitration trial passed on 2026-08-21. Two Cockpit nodes launched
+one Codex and one Copilot implementer from independent state directories within
+milliseconds of each other against the same single eligible Firn `pr-cure`.
+Snowcat granted exactly one lease; the operator confirmed that Codex won while
+Copilot claimed nothing. Codex mechanically updated Firn PR #65 without
+changing its patch, all checks emitted by the updated workflow passed, and it
+reported the pull-request artifact before Snowcat marked the item completed.
+The PR remained unmergeable because Firn branch protection still names a check
+that the PR itself renames. That repository-policy mismatch is outside both
+Snowcat's arbitration and Cockpit's execution boundary.
+
+Both interactive provider TUIs remained alive after their queue attempt, so
+both local worker records correctly continued to describe a running provider
+process. The read-only Snowcat projection exposed the authenticated lease
+principal but not the winning worker's client label; only the operator's
+terminal observation could attribute the lease to Codex. Automatic
+completed/no-work reconciliation therefore remains gated on Snowcat
+[#192](https://github.com/frostyard/snowcat/issues/192). That reconciliation,
+followed by a repeat trial in which terminal worker state settles without
+operator inference, remains before Phase 4 is complete.
 
 ## Phase 5 — Harden container delivery
 
