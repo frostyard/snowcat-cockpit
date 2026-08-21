@@ -1,0 +1,307 @@
+package queueview
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const MaxItems = 100
+
+var (
+	ErrInvalid     = errors.New("invalid queue observation request")
+	ErrUnavailable = errors.New("Snowcat queue observation is unavailable")
+	repositoryRE   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+)
+
+type Role string
+
+const (
+	RoleDiscoverer  Role = "discoverer"
+	RoleImplementer Role = "implementer"
+	RoleReviewer    Role = "reviewer"
+	RoleUnassigned  Role = "unassigned"
+)
+
+type Item struct {
+	ID               string   `json:"id"`
+	Repository       string   `json:"repository"`
+	Kind             string   `json:"kind"`
+	Priority         int      `json:"priority"`
+	AllowedActions   []string `json:"allowedActions"`
+	RequiredArtifact string   `json:"requiredArtifact"`
+	Contract         string   `json:"contract"`
+	ContractDetail   string   `json:"contractDetail,omitempty"`
+	Role             Role     `json:"role"`
+}
+
+type Snapshot struct {
+	Repository string       `json:"repository"`
+	ObservedAt time.Time    `json:"observedAt"`
+	Truncated  bool         `json:"truncated"`
+	Flagged    int          `json:"flagged"`
+	Counts     map[Role]int `json:"counts"`
+	Items      []Item       `json:"items"`
+}
+
+type Observer interface {
+	Observe(context.Context, string) (Snapshot, error)
+}
+
+type HTTPConfig struct {
+	Endpoint   string
+	Token      string
+	HTTPClient *http.Client
+	Now        func() time.Time
+}
+
+type HTTPObserver struct {
+	endpoint   *url.URL
+	token      string
+	httpClient *http.Client
+	now        func() time.Time
+}
+
+func NewHTTPObserver(config HTTPConfig) (*HTTPObserver, error) {
+	endpoint, err := url.Parse(config.Endpoint)
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
+		return nil, fmt.Errorf("%w: Snowcat MCP URL must be an absolute HTTP URL", ErrInvalid)
+	}
+	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+		return nil, fmt.Errorf("%w: Snowcat MCP URL scheme must be http or https", ErrInvalid)
+	}
+	if endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return nil, fmt.Errorf("%w: Snowcat MCP URL must not contain user info, a query, or a fragment", ErrInvalid)
+	}
+	if strings.TrimSpace(config.Token) == "" {
+		return nil, fmt.Errorf("%w: Snowcat MCP token is required", ErrInvalid)
+	}
+	config.Token = strings.TrimSpace(config.Token)
+	if config.HTTPClient == nil {
+		config.HTTPClient = &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	}
+	if config.Now == nil {
+		config.Now = func() time.Time { return time.Now().UTC() }
+	}
+	return &HTTPObserver{endpoint: endpoint, token: config.Token, httpClient: config.HTTPClient, now: config.Now}, nil
+}
+
+func (observer *HTTPObserver) Observe(ctx context.Context, repository string) (Snapshot, error) {
+	if !repositoryRE.MatchString(repository) {
+		return Snapshot{}, fmt.Errorf("%w: repository must be owner/name", ErrInvalid)
+	}
+
+	requestBody := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "tools/call",
+		Params: rpcParams{
+			Name: "list_work",
+			Arguments: listArguments{
+				Status:     "queued",
+				Repository: repository,
+				Limit:      MaxItems,
+			},
+		},
+	}
+	payload, err := json.Marshal(requestBody)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("encode Snowcat request: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, observer.endpoint.String(), bytes.NewReader(payload))
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("build Snowcat request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+observer.token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+
+	response, err := observer.httpClient.Do(request)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat MCP request failed", ErrUnavailable)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+		return Snapshot{}, fmt.Errorf("%w: Snowcat MCP returned HTTP %d", ErrUnavailable, response.StatusCode)
+	}
+
+	responsePayload, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024+1))
+	if err != nil || len(responsePayload) > 1024*1024 {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat MCP response exceeded the observation limit", ErrUnavailable)
+	}
+	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		responsePayload, err = firstSSEData(responsePayload)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("%w: Snowcat MCP returned invalid event data", ErrUnavailable)
+		}
+	}
+	var envelope rpcResponse
+	if err := json.Unmarshal(responsePayload, &envelope); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat MCP returned invalid JSON", ErrUnavailable)
+	}
+	if envelope.Error != nil {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat MCP rejected list_work", ErrUnavailable)
+	}
+	if envelope.Result.IsError {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat list_work failed", ErrUnavailable)
+	}
+	if len(envelope.Result.Content) != 1 || envelope.Result.Content[0].Type != "text" {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat list_work returned an unexpected result", ErrUnavailable)
+	}
+
+	var remoteItems []remoteItem
+	if err := json.Unmarshal([]byte(envelope.Result.Content[0].Text), &remoteItems); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat list_work returned invalid work items", ErrUnavailable)
+	}
+	if len(remoteItems) > MaxItems {
+		return Snapshot{}, fmt.Errorf("%w: Snowcat list_work exceeded the requested limit", ErrUnavailable)
+	}
+	items := make([]Item, 0, len(remoteItems))
+	counts := map[Role]int{RoleDiscoverer: 0, RoleImplementer: 0, RoleReviewer: 0, RoleUnassigned: 0}
+	flagged := 0
+	for _, remote := range remoteItems {
+		if remote.Repository != repository || remote.Status != "queued" {
+			return Snapshot{}, fmt.Errorf("%w: Snowcat list_work returned an item outside the requested projection", ErrUnavailable)
+		}
+		role := Classify(remote.Kind)
+		contract, contractDetail := assessContract(remote.RequiredArtifact, remote.AllowedActions)
+		if role == RoleUnassigned || contract == "ready" {
+			counts[role]++
+		} else {
+			flagged++
+		}
+		items = append(items, Item{
+			ID:               remote.ID,
+			Repository:       remote.Repository,
+			Kind:             remote.Kind,
+			Priority:         remote.Priority,
+			AllowedActions:   append([]string(nil), remote.AllowedActions...),
+			RequiredArtifact: remote.RequiredArtifact,
+			Contract:         contract,
+			ContractDetail:   contractDetail,
+			Role:             role,
+		})
+	}
+	return Snapshot{
+		Repository: repository,
+		ObservedAt: observer.now().UTC(),
+		Truncated:  len(items) == MaxItems,
+		Flagged:    flagged,
+		Counts:     counts,
+		Items:      items,
+	}, nil
+}
+
+func firstSSEData(payload []byte) ([]byte, error) {
+	lines := strings.Split(strings.ReplaceAll(string(payload), "\r\n", "\n"), "\n")
+	data := make([]string, 0, 1)
+	for _, line := range lines {
+		if line == "" {
+			if len(data) != 0 {
+				return []byte(strings.Join(data, "\n")), nil
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			value := strings.TrimPrefix(line, "data:")
+			value = strings.TrimPrefix(value, " ")
+			data = append(data, value)
+		}
+	}
+	if len(data) != 0 {
+		return []byte(strings.Join(data, "\n")), nil
+	}
+	return nil, errors.New("SSE response contained no data event")
+}
+
+func assessContract(requiredArtifact string, allowedActions []string) (string, string) {
+	if requiredArtifact == "" {
+		return "unknown", "Snowcat did not declare requiredArtifact"
+	}
+	if requiredArtifact != "none" && requiredArtifact != "pull-request" {
+		return "unknown", "Snowcat returned an unknown requiredArtifact"
+	}
+	hasWrite := false
+	hasOpenPR := false
+	for _, action := range allowedActions {
+		hasWrite = hasWrite || action == "write"
+		hasOpenPR = hasOpenPR || action == "open-pr"
+	}
+	if requiredArtifact == "pull-request" && !hasOpenPR {
+		return "suspicious", "pull-request delivery lacks open-pr authority"
+	}
+	if hasWrite && (requiredArtifact != "pull-request" || !hasOpenPR) {
+		return "suspicious", "write authority lacks a complete pull-request delivery contract"
+	}
+	return "ready", ""
+}
+
+func Classify(kind string) Role {
+	switch {
+	case strings.HasSuffix(kind, "-discovery"):
+		return RoleDiscoverer
+	case strings.HasSuffix(kind, "-fix"), kind == "pr-cure", kind == "pr-cure-change":
+		return RoleImplementer
+	case kind == "pr-review":
+		return RoleReviewer
+	default:
+		return RoleUnassigned
+	}
+}
+
+type rpcRequest struct {
+	JSONRPC string    `json:"jsonrpc"`
+	ID      int       `json:"id"`
+	Method  string    `json:"method"`
+	Params  rpcParams `json:"params"`
+}
+
+type rpcParams struct {
+	Name      string        `json:"name"`
+	Arguments listArguments `json:"arguments"`
+}
+
+type listArguments struct {
+	Status     string `json:"status"`
+	Repository string `json:"repository"`
+	Limit      int    `json:"limit"`
+}
+
+type rpcResponse struct {
+	Result rpcResult `json:"result"`
+	Error  any       `json:"error"`
+}
+
+type rpcResult struct {
+	Content []rpcContent `json:"content"`
+	IsError bool         `json:"isError"`
+}
+
+type rpcContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type remoteItem struct {
+	ID               string   `json:"id"`
+	Repository       string   `json:"repository"`
+	Kind             string   `json:"kind"`
+	Priority         int      `json:"priority"`
+	Status           string   `json:"status"`
+	AllowedActions   []string `json:"allowedActions"`
+	RequiredArtifact string   `json:"requiredArtifact"`
+}

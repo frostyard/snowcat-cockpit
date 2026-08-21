@@ -61,6 +61,31 @@ func TestServeRejectsNonLoopbackBeforeCreatingState(t *testing.T) {
 	}
 }
 
+func TestQueueObserverConfigurationUsesEnvironmentOnly(t *testing.T) {
+	t.Parallel()
+	lookup := func(values map[string]string) func(string) string {
+		return func(name string) string { return values[name] }
+	}
+
+	observer, err := queueObserverFromLookup(lookup(nil))
+	if err != nil || observer != nil {
+		t.Fatalf("unconfigured observer = %#v, error = %v", observer, err)
+	}
+	if _, err := queueObserverFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_MCP_URL": "https://snowcat.test/mcp"})); err == nil {
+		t.Fatal("URL without token was accepted")
+	}
+	if _, err := queueObserverFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_MCP_TOKEN": "secret"})); err == nil {
+		t.Fatal("token without URL was accepted")
+	}
+	observer, err = queueObserverFromLookup(lookup(map[string]string{
+		"SNOWCAT_COCKPIT_MCP_URL":   "https://snowcat.test/mcp",
+		"SNOWCAT_COCKPIT_MCP_TOKEN": "secret",
+	}))
+	if err != nil || observer == nil {
+		t.Fatalf("configured observer = %#v, error = %v", observer, err)
+	}
+}
+
 func TestRunInstallKitThenProfiles(t *testing.T) {
 	t.Parallel()
 

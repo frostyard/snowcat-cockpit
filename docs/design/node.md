@@ -136,7 +136,9 @@ Phase 4's accepted [queue-observation decision](../adr/0004-observe-snowcat-once
 adds only an operator-triggered, bounded `list_work` projection for planning a
 single fleet batch. It introduces no poller, refill loop, queue copy, or
 worker-side lease handling; Snowcat remains authoritative when each launched
-worker claims.
+worker claims. The exact projection, role classifier, contract warning, and
+12-worker batch ceiling are defined by the
+[queue and fleet contract](../specs/queue-observation-and-fleets.md).
 
 ## Operational notes
 
@@ -155,4 +157,5 @@ worker claims.
 - Contracts: [node CLI and HTTP API](../specs/node-api.md)
 - Profile contract: [worker profiles and locked skill kit](../specs/worker-profiles.md)
 - Live readiness contract: [provider preflight](../specs/provider-preflight.md)
+- Queue and batch contract: [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md)
 - Built in: [production roadmap](../plans/0002-production-roadmap.md)

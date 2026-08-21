@@ -45,6 +45,24 @@ go run ./cmd/snowcat-cockpit serve \
   --skills-dir /path/to/snowcat/.agents/skills
 ```
 
+To enable operator-triggered queue snapshots and bounded fleet launch, supply
+the Snowcat HTTP MCP endpoint and a dedicated token through the starting
+shell's environment, never command-line arguments:
+
+```bash
+export SNOWCAT_COCKPIT_MCP_URL=https://snowcat.example/mcp
+read -rsp 'Snowcat Cockpit observer token: ' SNOWCAT_COCKPIT_MCP_TOKEN
+export SNOWCAT_COCKPIT_MCP_TOKEN
+go run ./cmd/snowcat-cockpit serve
+```
+
+Until Snowcat [issue #191](https://github.com/frostyard/snowcat/issues/191)
+adds tool-scoped credentials, mint this dedicated
+token with the never-seeded `cockpit-observer-no-claim` kind restriction. The
+dashboard observes only when you press **Observe once** or launch a fleet. A
+fleet is capped to eligible work and 12 workers, launches once, and never
+refills.
+
 Open `http://127.0.0.1:7682`. The node creates only a stable, non-secret ID
 under `${XDG_STATE_HOME:-$HOME/.local/state}/snowcat-cockpit`. It refuses a
 non-loopback listen address. A provider's launch control is enabled only while

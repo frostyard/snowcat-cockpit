@@ -3,6 +3,8 @@ const byId = (id) => document.getElementById(id);
 let startedAt = null;
 let readyProviders = [];
 let launchRole = null;
+let fleetRole = null;
+let latestSnapshot = null;
 
 function formatUptime() {
   if (!startedAt) return "—";
@@ -118,6 +120,95 @@ function renderProfiles(snapshot) {
   byId("launch-discoverer").disabled = readyCount === 0;
   byId("launch-implementer").disabled = readyCount === 0;
   byId("launch-reviewer").disabled = readyCount === 0;
+  updateFleetButtons();
+}
+
+function updateFleetButtons() {
+  for (const role of ["discoverer", "implementer", "reviewer"]) {
+    const eligible = latestSnapshot?.counts?.[role] || 0;
+    const button = byId(`launch-fleet-${role}`);
+    button.disabled = readyProviders.length === 0 || eligible === 0;
+    button.title = latestSnapshot
+      ? `${eligible} eligible ${eligible === 1 ? "item" : "items"} in the latest snapshot`
+      : "Observe the queue before planning a fleet";
+  }
+}
+
+function renderQueue(snapshot) {
+  latestSnapshot = snapshot;
+  for (const role of ["discoverer", "implementer", "reviewer", "unassigned"]) {
+    byId(`queue-${role}-count`).textContent = String(snapshot.counts?.[role] || 0);
+  }
+  const observedAt = new Date(snapshot.observedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const flagged = snapshot.flagged ? ` · ${snapshot.flagged} contract ${snapshot.flagged === 1 ? "warning" : "warnings"} withheld` : "";
+  byId("queue-summary").textContent = `${snapshot.items.length} queued at ${observedAt}${snapshot.truncated ? " · truncated at 100" : " · complete bounded response"}${flagged}`;
+  byId("queue-repository").value = snapshot.repository;
+
+  const tbody = byId("queue-body");
+  tbody.replaceChildren();
+  if (snapshot.items.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.className = "ph-empty";
+    cell.textContent = `No queued work observed for ${snapshot.repository}.`;
+    row.append(cell);
+    tbody.append(row);
+  }
+  for (const item of snapshot.items) {
+    const row = document.createElement("tr");
+    const kind = document.createElement("td");
+    const kindName = document.createElement("div");
+    kindName.className = "ph-name";
+    const strong = document.createElement("strong");
+    strong.textContent = item.kind;
+    const small = document.createElement("small");
+    small.textContent = item.id;
+    kindName.append(strong, small);
+    kind.append(kindName);
+    const role = document.createElement("td");
+    const roleBadge = badge(item.role === "unassigned" ? "unassigned" : "ready");
+    roleBadge.textContent = item.role;
+    if (item.role === "unassigned") roleBadge.className = "ph-badge warn";
+    role.append(roleBadge);
+    const priority = document.createElement("td");
+    priority.textContent = String(item.priority);
+    const artifact = document.createElement("td");
+    const artifactName = document.createElement("div");
+    artifactName.className = "ph-name";
+    const artifactStrong = document.createElement("strong");
+    artifactStrong.textContent = item.requiredArtifact || "unspecified";
+    const contractBadge = badge(item.contract === "ready" ? "ready" : item.contract === "suspicious" ? "failed" : "unknown");
+    contractBadge.textContent = item.contract;
+    if (item.contractDetail) contractBadge.title = item.contractDetail;
+    artifactName.append(artifactStrong, contractBadge);
+    artifact.append(artifactName);
+    const actions = document.createElement("td");
+    actions.className = "ph-detail";
+    actions.textContent = item.allowedActions.join(" · ");
+    row.append(kind, role, priority, artifact, actions);
+    tbody.append(row);
+  }
+  updateFleetButtons();
+}
+
+async function observeQueue(event) {
+  event.preventDefault();
+  const button = byId("queue-observe");
+  button.disabled = true;
+  byId("queue-summary").textContent = "Taking one bounded Snowcat snapshot…";
+  try {
+    const snapshot = await requestJSON("/api/v1/queue/snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repository: byId("queue-repository").value.trim() }),
+    });
+    renderQueue(snapshot);
+  } catch (error) {
+    byId("queue-summary").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function workerAction(label, tone, action) {
@@ -256,6 +347,64 @@ function closeLaunchDialog() {
   if (byId("launch-dialog").open) byId("launch-dialog").close();
 }
 
+function openFleetDialog(role) {
+  fleetRole = role;
+  const eligible = latestSnapshot?.counts?.[role] || 0;
+  byId("fleet-title").textContent = `Launch ${role} fleet`;
+  byId("fleet-message").textContent = `${eligible} eligible in the latest view; Cockpit will take a fresh snapshot before launch.`;
+  const provider = byId("fleet-provider");
+  provider.replaceChildren();
+  for (const candidate of readyProviders) {
+    const option = document.createElement("option");
+    option.value = candidate.id;
+    option.textContent = candidate.label;
+    provider.append(option);
+  }
+  byId("fleet-count").value = String(Math.min(3, Math.max(1, eligible)));
+  byId("fleet-repository").value = latestSnapshot?.repository || byId("queue-repository").value.trim();
+  if (!byId("fleet-source").value) byId("fleet-source").value = byId("launch-source").value;
+  byId("fleet-dialog").showModal();
+}
+
+function closeFleetDialog() {
+  if (byId("fleet-dialog").open) byId("fleet-dialog").close();
+}
+
+async function submitFleet(event) {
+  event.preventDefault();
+  const submit = byId("fleet-submit");
+  submit.disabled = true;
+  byId("fleet-message").textContent = "Observing once, then allocating the bounded batch…";
+  try {
+    const result = await requestJSON("/api/v1/fleets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: byId("fleet-provider").value,
+        role: fleetRole,
+        repository: byId("fleet-repository").value.trim(),
+        source: byId("fleet-source").value.trim(),
+        baseRef: byId("fleet-base-ref").value.trim(),
+        count: Number(byId("fleet-count").value),
+      }),
+    });
+    renderQueue(result.snapshot);
+    closeFleetDialog();
+    await loadWorkers();
+    const suffix = result.failures.length
+      ? ` · stopped after launch ${result.failures[0].ordinal} failed`
+      : result.planned < result.requested
+        ? ` · capped from ${result.requested} to ${result.planned} eligible`
+        : "";
+    byId("workers-summary").textContent = `${result.launched.length} ${fleetRole} ${result.launched.length === 1 ? "worker" : "workers"} launched${suffix}`;
+    byId("workers").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    byId("fleet-message").textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+}
+
 async function submitLaunch(event) {
   event.preventDefault();
   const submit = byId("launch-submit");
@@ -375,9 +524,16 @@ byId("refresh").addEventListener("click", () => {
 byId("launch-discoverer").addEventListener("click", () => openLaunchDialog("discoverer"));
 byId("launch-implementer").addEventListener("click", () => openLaunchDialog("implementer"));
 byId("launch-reviewer").addEventListener("click", () => openLaunchDialog("reviewer"));
+byId("launch-fleet-discoverer").addEventListener("click", () => openFleetDialog("discoverer"));
+byId("launch-fleet-implementer").addEventListener("click", () => openFleetDialog("implementer"));
+byId("launch-fleet-reviewer").addEventListener("click", () => openFleetDialog("reviewer"));
 byId("launch-close").addEventListener("click", closeLaunchDialog);
 byId("launch-cancel").addEventListener("click", closeLaunchDialog);
 byId("launch-form").addEventListener("submit", submitLaunch);
+byId("fleet-close").addEventListener("click", closeFleetDialog);
+byId("fleet-cancel").addEventListener("click", closeFleetDialog);
+byId("fleet-form").addEventListener("submit", submitFleet);
+byId("queue-form").addEventListener("submit", observeQueue);
 loadHealth();
 loadChecks();
 loadProfiles();

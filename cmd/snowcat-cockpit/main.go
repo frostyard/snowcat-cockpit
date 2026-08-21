@@ -20,6 +20,7 @@ import (
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
+	"github.com/frostyard/snowcat-cockpit/internal/queueview"
 	"github.com/frostyard/snowcat-cockpit/internal/state"
 	"github.com/frostyard/snowcat-cockpit/internal/web"
 	"github.com/frostyard/snowcat-cockpit/internal/worker"
@@ -451,6 +452,11 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer workerManager.Close()
+	queueObserver, err := queueObserverFromLookup(os.Getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "configure Snowcat queue observation: %v\n", err)
+		return 1
+	}
 
 	listener, err := net.Listen("tcp", *listenAddress)
 	if err != nil {
@@ -473,6 +479,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 				return snapshot
 			},
 			Workers: workerManager,
+			Queue:   queueObserver,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -494,6 +501,21 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func queueObserverFromLookup(lookup func(string) string) (queueview.Observer, error) {
+	endpoint := lookup("SNOWCAT_COCKPIT_MCP_URL")
+	token := lookup("SNOWCAT_COCKPIT_MCP_TOKEN")
+	if endpoint == "" && token == "" {
+		return nil, nil
+	}
+	if endpoint == "" {
+		return nil, errors.New("SNOWCAT_COCKPIT_MCP_URL is required when queue observation is configured")
+	}
+	if token == "" {
+		return nil, errors.New("SNOWCAT_COCKPIT_MCP_TOKEN is required when queue observation is configured")
+	}
+	return queueview.NewHTTPObserver(queueview.HTTPConfig{Endpoint: endpoint, Token: token})
 }
 
 func loadProfileSnapshot(skillsDirectory, stateDirectory string) (profile.Snapshot, error) {

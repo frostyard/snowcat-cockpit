@@ -54,6 +54,8 @@ The text form contains the same checks in a human-readable table.
 | `GET` | `/api/v1/doctor` | Current doctor result |
 | `GET` | `/api/v1/profiles` | Current structural worker-profile result |
 | `GET` | `/api/v1/workers` | Current managed-worker inventory |
+| `POST` | `/api/v1/queue/snapshot` | One bounded Snowcat queue observation |
+| `POST` | `/api/v1/fleets` | One snapshot-capped managed-worker batch |
 | `POST` | `/api/v1/workers` | Launch one managed worker |
 | `POST` | `/api/v1/workers/{id}/stop` | Stop one worker and retain its workspace |
 | `POST` | `/api/v1/workers/{id}/console` | Open one loopback worker terminal URL |
@@ -95,6 +97,9 @@ MUST return an HTTP 404.
    authority and output-retention contract.
 10. Worker operations MUST follow the [managed-worker](managed-workers.md)
     lifecycle and retention contract.
+11. Queue snapshots and batch launches MUST follow the
+    [queue observation and bounded fleets](queue-observation-and-fleets.md)
+    contract.
 
 ## References
 
@@ -103,3 +108,4 @@ MUST return an HTTP 404.
 - Profile contract: [worker profiles and locked skill kit](worker-profiles.md)
 - Live readiness contract: [provider preflight](provider-preflight.md)
 - Worker lifecycle contract: [managed workers](managed-workers.md)
+- Queue and batch contract: [queue observation and bounded fleets](queue-observation-and-fleets.md)

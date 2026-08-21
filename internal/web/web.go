@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
+	"github.com/frostyard/snowcat-cockpit/internal/fleet"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
+	"github.com/frostyard/snowcat-cockpit/internal/queueview"
 	"github.com/frostyard/snowcat-cockpit/internal/worker"
 )
 
@@ -39,6 +41,7 @@ type Config struct {
 	Doctor    func() doctor.Result
 	Profiles  func() profile.Snapshot
 	Workers   WorkerManager
+	Queue     queueview.Observer
 }
 
 type WorkerManager interface {
@@ -51,6 +54,7 @@ type WorkerManager interface {
 
 func New(config Config) http.Handler {
 	mux := http.NewServeMux()
+	fleets := fleet.New(config.Queue, config.Workers)
 	mux.HandleFunc("GET /", func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/" {
 			http.NotFound(response, request)
@@ -90,20 +94,49 @@ func New(config Config) http.Handler {
 		}
 		writeJSON(response, http.StatusOK, records)
 	})
+	mux.HandleFunc("POST /api/v1/queue/snapshot", func(response http.ResponseWriter, request *http.Request) {
+		if config.Queue == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "Snowcat queue observation is not configured"})
+			return
+		}
+		var input struct {
+			Repository string `json:"repository"`
+		}
+		if !decodeJSON(response, request, &input) {
+			return
+		}
+		snapshot, err := config.Queue.Observe(request.Context(), input.Repository)
+		if err != nil {
+			writeQueueError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusOK, snapshot)
+	})
+	mux.HandleFunc("POST /api/v1/fleets", func(response http.ResponseWriter, request *http.Request) {
+		var input fleet.Request
+		if !decodeJSON(response, request, &input) {
+			return
+		}
+		result, err := fleets.Launch(request.Context(), input)
+		if err != nil {
+			writeQueueError(response, err)
+			return
+		}
+		status := http.StatusCreated
+		if result.Planned == 0 {
+			status = http.StatusOK
+		} else if len(result.Failures) != 0 {
+			status = http.StatusMultiStatus
+		}
+		writeJSON(response, status, result)
+	})
 	mux.HandleFunc("POST /api/v1/workers", func(response http.ResponseWriter, request *http.Request) {
 		if config.Workers == nil {
 			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "managed workers are unavailable"})
 			return
 		}
-		if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
-			writeJSON(response, http.StatusUnsupportedMediaType, map[string]string{"error": "Content-Type must be application/json"})
-			return
-		}
-		decoder := json.NewDecoder(io.LimitReader(request.Body, 64*1024))
-		decoder.DisallowUnknownFields()
 		var launch worker.LaunchRequest
-		if err := decoder.Decode(&launch); err != nil {
-			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid launch request"})
+		if !decodeJSON(response, request, &launch) {
 			return
 		}
 		record, err := config.Workers.Launch(request.Context(), launch)
@@ -156,6 +189,34 @@ func New(config Config) http.Handler {
 		writeJSON(response, http.StatusNotFound, map[string]string{"error": "not found"})
 	})
 	return mux
+}
+
+func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
+	if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+		writeJSON(response, http.StatusUnsupportedMediaType, map[string]string{"error": "Content-Type must be application/json"})
+		return false
+	}
+	decoder := json.NewDecoder(io.LimitReader(request.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid JSON request"})
+		return false
+	}
+	return true
+}
+
+func writeQueueError(response http.ResponseWriter, err error) {
+	status := http.StatusBadGateway
+	detail := "Snowcat queue operation failed"
+	switch {
+	case errors.Is(err, queueview.ErrInvalid), errors.Is(err, fleet.ErrInvalid):
+		status = http.StatusBadRequest
+		detail = err.Error()
+	case errors.Is(err, queueview.ErrUnavailable), errors.Is(err, fleet.ErrUnavailable):
+		status = http.StatusServiceUnavailable
+		detail = err.Error()
+	}
+	writeJSON(response, status, map[string]string{"error": detail})
 }
 
 func writeWorkerError(response http.ResponseWriter, err error) {

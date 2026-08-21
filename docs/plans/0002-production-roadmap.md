@@ -118,6 +118,18 @@ Snowcat's human admission and merge boundaries. What remains in Phase 4 is to
 turn those individually launched workers into one bounded batch operation and
 to reconcile Snowcat completion with provider-process state.
 
+The first bounded-batch slice now follows the
+[queue and fleet contract](../specs/queue-observation-and-fleets.md): an
+operator takes one 100-item `list_work` snapshot, sees deterministic lane and
+delivery-contract classification, and launches at most 12 workers capped to
+eligible work. The batch observes again at launch time, stops on the first
+allocation failure, retains every created workspace, and never refills.
+Snowcat issues [#191](https://github.com/frostyard/snowcat/issues/191) and
+[#192](https://github.com/frostyard/snowcat/issues/192) track the remaining
+server-side observer scope and lifecycle-correlation contracts.
+Completed-terminal reconciliation and the two-node arbitration trial remain
+before Phase 4 is complete.
+
 ## Phase 5 — Harden container delivery
 
 - Publish pinned multi-architecture worker images running as non-root.

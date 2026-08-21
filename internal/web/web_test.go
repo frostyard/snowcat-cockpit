@@ -11,12 +11,14 @@ import (
 
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
+	"github.com/frostyard/snowcat-cockpit/internal/queueview"
 	"github.com/frostyard/snowcat-cockpit/internal/worker"
 )
 
 type fakeWorkerManager struct {
-	records []worker.Record
-	launch  worker.LaunchRequest
+	records  []worker.Record
+	launch   worker.LaunchRequest
+	launches []worker.LaunchRequest
 }
 
 func (manager *fakeWorkerManager) List(context.Context) ([]worker.Record, error) {
@@ -25,12 +27,25 @@ func (manager *fakeWorkerManager) List(context.Context) ([]worker.Record, error)
 
 func (manager *fakeWorkerManager) Launch(_ context.Context, request worker.LaunchRequest) (worker.Record, error) {
 	manager.launch = request
+	manager.launches = append(manager.launches, request)
 	if request.Provider == "blocked" {
 		return worker.Record{}, worker.ErrNotReady
 	}
 	record := worker.Record{ID: "worker-0123456789abcdef", Status: worker.StatusRunning, Provider: request.Provider, Role: request.Role}
 	manager.records = append(manager.records, record)
 	return record, nil
+}
+
+type fakeQueueObserver struct {
+	calls      int
+	repository string
+	snapshot   queueview.Snapshot
+}
+
+func (observer *fakeQueueObserver) Observe(_ context.Context, repository string) (queueview.Snapshot, error) {
+	observer.calls++
+	observer.repository = repository
+	return observer.snapshot, nil
 }
 
 func (manager *fakeWorkerManager) Stop(_ context.Context, workerID string) (worker.Record, error) {
@@ -56,6 +71,17 @@ func TestRoutes(t *testing.T) {
 
 	startedAt := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	workers := &fakeWorkerManager{records: []worker.Record{{ID: "worker-fedcba9876543210", Status: worker.StatusExited}}}
+	queue := &fakeQueueObserver{snapshot: queueview.Snapshot{
+		Repository: "frostyard/firn",
+		ObservedAt: startedAt,
+		Counts: map[queueview.Role]int{
+			queueview.RoleDiscoverer:  1,
+			queueview.RoleImplementer: 2,
+			queueview.RoleReviewer:    1,
+			queueview.RoleUnassigned:  0,
+		},
+		Items: []queueview.Item{{ID: "item-1", Repository: "frostyard/firn", Kind: "ci-signal-fix", Role: queueview.RoleImplementer}},
+	}}
 	handler := New(Config{
 		NodeID:    "node-0123456789abcdef0123456789abcdef",
 		Version:   "test",
@@ -67,6 +93,47 @@ func TestRoutes(t *testing.T) {
 			return profile.Snapshot{Status: profile.StatusPreflightRequired}
 		},
 		Workers: workers,
+		Queue:   queue,
+	})
+
+	t.Run("queue snapshot", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/queue/snapshot", strings.NewReader(`{"repository":"frostyard/firn"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var snapshot queueview.Snapshot
+		if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Counts[queueview.RoleImplementer] != 2 || queue.repository != "frostyard/firn" {
+			t.Fatalf("snapshot = %#v, repository = %q", snapshot, queue.repository)
+		}
+	})
+
+	t.Run("bounded fleet launch", func(t *testing.T) {
+		before := len(workers.launches)
+		body := strings.NewReader(`{"provider":"codex","role":"implementer","repository":"frostyard/firn","source":"/repo","baseRef":"main","count":9}`)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/fleets", body)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var result struct {
+			Eligible int             `json:"eligible"`
+			Planned  int             `json:"planned"`
+			Launched []worker.Record `json:"launched"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Eligible != 2 || result.Planned != 2 || len(result.Launched) != 2 || len(workers.launches)-before != 2 {
+			t.Fatalf("result = %#v, launches = %d", result, len(workers.launches)-before)
+		}
 	})
 
 	t.Run("dashboard", func(t *testing.T) {
@@ -81,6 +148,9 @@ func TestRoutes(t *testing.T) {
 		}
 		if !strings.Contains(response.Body.String(), "Launch one discoverer") {
 			t.Fatal("dashboard discoverer control is missing")
+		}
+		if !strings.Contains(response.Body.String(), "Observe once") || !strings.Contains(response.Body.String(), "Launch implementer fleet") {
+			t.Fatal("dashboard queue or bounded-fleet control is missing")
 		}
 		if strings.Contains(response.Body.String(), "https://") || strings.Contains(response.Body.String(), "http://") {
 			t.Fatal("dashboard contains an external runtime dependency")
@@ -124,7 +194,11 @@ func TestRoutes(t *testing.T) {
 		if err := json.NewDecoder(response.Body).Decode(&records); err != nil {
 			t.Fatal(err)
 		}
-		if len(records) != 1 || records[0].Status != worker.StatusExited {
+		foundExited := false
+		for _, record := range records {
+			foundExited = foundExited || record.ID == "worker-fedcba9876543210" && record.Status == worker.StatusExited
+		}
+		if !foundExited {
 			t.Fatalf("records = %#v", records)
 		}
 	})

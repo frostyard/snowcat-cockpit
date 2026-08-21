@@ -23,12 +23,13 @@
       <nav class="ph-nav" aria-label="Cockpit sections">
         <div class="ph-nav-group">Console</div>
         <a class="ph-nav-link active" href="#overview"><span class="ph-nav-num">01</span>Overview</a>
-        <a class="ph-nav-link" href="#fleet"><span class="ph-nav-num">02</span>Fleet</a>
-        <a class="ph-nav-link" href="#readiness"><span class="ph-nav-num">03</span>Readiness</a>
+        <a class="ph-nav-link" href="#queue"><span class="ph-nav-num">02</span>Queue</a>
+        <a class="ph-nav-link" href="#fleet"><span class="ph-nav-num">03</span>Fleet</a>
+        <a class="ph-nav-link" href="#readiness"><span class="ph-nav-num">04</span>Readiness</a>
         <div class="ph-nav-group">Inventory</div>
-        <a class="ph-nav-link" href="#profiles"><span class="ph-nav-num">04</span>Profiles</a>
-        <a class="ph-nav-link" href="#workers"><span class="ph-nav-num">05</span>Workers</a>
-        <span class="ph-nav-link disabled"><span class="ph-nav-num">06</span>Workspaces</span>
+        <a class="ph-nav-link" href="#profiles"><span class="ph-nav-num">05</span>Profiles</a>
+        <a class="ph-nav-link" href="#workers"><span class="ph-nav-num">06</span>Workers</a>
+        <span class="ph-nav-link disabled"><span class="ph-nav-num">07</span>Workspaces</span>
       </nav>
 
       <div class="ph-side-foot">
@@ -81,6 +82,28 @@
           <div class="ph-metric-foot"><span>podman · docker</span><span>optional</span></div>
         </section>
 
+        <section class="ph-card ph-table-card ph-span-full" id="queue">
+          <div class="ph-table-toolbar ph-queue-toolbar">
+            <div><h2>Snowcat queue</h2><span id="queue-summary">No snapshot taken · observation happens only when requested</span></div>
+            <form class="ph-queue-form" id="queue-form">
+              <label><span>Repository</span><input id="queue-repository" type="text" placeholder="frostyard/firn" pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" required></label>
+              <button class="ph-button" id="queue-observe" type="submit">Observe once</button>
+            </form>
+          </div>
+          <div class="ph-queue-counts" aria-label="Eligible work by lane">
+            <div><span>01 · Discoverers</span><strong id="queue-discoverer-count">—</strong><small>exact *-discovery</small></div>
+            <div><span>02 · Implementers</span><strong id="queue-implementer-count">—</strong><small>*-fix and cure work</small></div>
+            <div><span>03 · Reviewers</span><strong id="queue-reviewer-count">—</strong><small>exact pr-review</small></div>
+            <div><span>Unassigned</span><strong id="queue-unassigned-count">—</strong><small>visible, never inferred</small></div>
+          </div>
+          <div class="ph-table-wrap">
+            <table class="ph-table">
+              <thead><tr><th>Kind</th><th>Lane</th><th>Priority</th><th>Delivers</th><th>Allowed actions</th></tr></thead>
+              <tbody id="queue-body"><tr><td class="ph-empty" colspan="5">Take a bounded snapshot to see queued work. Cockpit does not poll.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
         <section class="ph-card ph-span-third" id="fleet">
           <div class="ph-card-heading split">
             <div><span class="ph-index">01</span><h2>Discoverers</h2><p>Read lane · exact <code>*-discovery</code></p></div>
@@ -90,7 +113,8 @@
             <strong>Turn evidence into bounded proposals.</strong>
             <p>Read-only workers inspect one gap, declare its delivery contract, and leave admission to the operator.</p>
           </div>
-          <button class="ph-button ph-launch" id="launch-discoverer" data-role="discoverer" type="button" disabled>Launch one discoverer <span>→</span></button>
+          <button class="ph-button ph-launch ph-fleet-launch" id="launch-fleet-discoverer" type="button" disabled>Launch discoverer fleet <span>→</span></button>
+          <button class="ph-button secondary ph-launch" id="launch-discoverer" data-role="discoverer" type="button" disabled>Launch one discoverer <span>→</span></button>
         </section>
         <section class="ph-card ph-span-third">
           <div class="ph-card-heading split">
@@ -101,7 +125,8 @@
             <strong>Work only what can be delivered.</strong>
             <p>Isolated checkout, canonical queue skill, validated MCP, and authority checked before launch.</p>
           </div>
-          <button class="ph-button ph-launch" id="launch-implementer" data-role="implementer" type="button" disabled>Launch one implementer <span>→</span></button>
+          <button class="ph-button ph-launch ph-fleet-launch" id="launch-fleet-implementer" type="button" disabled>Launch implementer fleet <span>→</span></button>
+          <button class="ph-button secondary ph-launch" id="launch-implementer" data-role="implementer" type="button" disabled>Launch one implementer <span>→</span></button>
         </section>
         <section class="ph-card ph-span-third">
           <div class="ph-card-heading split">
@@ -112,7 +137,8 @@
             <strong>Keep the review independent.</strong>
             <p>Reviewer profiles preserve Snowcat's different-model contract and report structured findings directly.</p>
           </div>
-          <button class="ph-button ph-launch" id="launch-reviewer" data-role="reviewer" type="button" disabled>Launch one reviewer <span>→</span></button>
+          <button class="ph-button ph-launch ph-fleet-launch" id="launch-fleet-reviewer" type="button" disabled>Launch reviewer fleet <span>→</span></button>
+          <button class="ph-button secondary ph-launch" id="launch-reviewer" data-role="reviewer" type="button" disabled>Launch one reviewer <span>→</span></button>
         </section>
 
         <section class="ph-card ph-table-card ph-span-full" id="workers">
@@ -190,6 +216,28 @@
       <div class="ph-dialog-actions">
         <button class="ph-button secondary" id="launch-cancel" type="button">Cancel</button>
         <button class="ph-button" id="launch-submit" type="submit">Launch worker</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog class="ph-dialog" id="fleet-dialog" aria-labelledby="fleet-title">
+    <form class="ph-form" id="fleet-form">
+      <div class="ph-dialog-head">
+        <div><span class="ph-index">Bounded batch</span><h2 id="fleet-title">Launch a managed fleet</h2></div>
+        <button class="ph-icon-button" id="fleet-close" type="button" aria-label="Close fleet dialog">×</button>
+      </div>
+      <p class="ph-form-intro">Cockpit takes one fresh queue snapshot, caps the batch to eligible work, then launches once. It does not refill the fleet.</p>
+      <div class="ph-form-grid">
+        <label>Provider<select id="fleet-provider" required></select></label>
+        <label>Workers<input id="fleet-count" type="number" min="1" max="12" value="3" required></label>
+        <label>Repository<input id="fleet-repository" type="text" pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" required></label>
+        <label>Base ref<input id="fleet-base-ref" type="text" value="HEAD" required></label>
+        <label class="wide">Local Git source<input id="fleet-source" type="text" placeholder="/absolute/path/to/checkout" required></label>
+        <div class="ph-form-boundary wide"><span>Batch boundary</span><strong>One snapshot · at most 12 launches · no automatic refill</strong></div>
+      </div>
+      <p class="ph-form-message" id="fleet-message" role="status"></p>
+      <div class="ph-dialog-actions">
+        <button class="ph-button secondary" id="fleet-cancel" type="button">Cancel</button>
+        <button class="ph-button" id="fleet-submit" type="submit">Launch bounded fleet</button>
       </div>
     </form>
   </dialog>

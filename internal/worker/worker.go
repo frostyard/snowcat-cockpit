@@ -158,6 +158,7 @@ func New(config Config) (*Manager, error) {
 	if config.Environment == nil {
 		config.Environment = os.Environ
 	}
+	parentEnvironment := config.Environment
 	return &Manager{
 		stateDirectory: config.StateDirectory,
 		nodeID:         config.NodeID,
@@ -166,9 +167,20 @@ func New(config Config) (*Manager, error) {
 		lookPath:       config.LookPath,
 		now:            config.Now,
 		random:         config.Random,
-		environment:    config.Environment,
+		environment:    func() []string { return workerEnvironment(parentEnvironment()) },
 		consoles:       make(map[string]*consoleProcess),
 	}, nil
+}
+
+func workerEnvironment(environment []string) []string {
+	result := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, "SNOWCAT_COCKPIT_MCP_TOKEN=") || strings.HasPrefix(entry, "SNOWCAT_COCKPIT_MCP_URL=") {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return result
 }
 
 func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Record, error) {

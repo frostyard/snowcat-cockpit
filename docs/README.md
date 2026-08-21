@@ -32,6 +32,7 @@ in [org-adrs.md](org-adrs.md).
 - [Node CLI and HTTP API](specs/node-api.md)
 - [Provider preflight](specs/provider-preflight.md)
 - [Managed workers](specs/managed-workers.md)
+- [Queue observation and bounded fleets](specs/queue-observation-and-fleets.md)
 - [Worker profiles and locked skill kit](specs/worker-profiles.md)
 
 ### Plans

@@ -200,7 +200,14 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 		LookPath:       func(name string) (string, error) { return "/tools/" + name, nil },
 		Now:            func() time.Time { return now },
 		Random:         bytes.NewReader([]byte("12345678")),
-		Environment:    func() []string { return []string{"PATH=/tools", "SECRET_SENTINEL=never-persist"} },
+		Environment: func() []string {
+			return []string{
+				"PATH=/tools",
+				"SECRET_SENTINEL=never-persist",
+				"SNOWCAT_COCKPIT_MCP_URL=https://snowcat.example/mcp",
+				"SNOWCAT_COCKPIT_MCP_TOKEN=observer-secret",
+			}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +235,13 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 	launchCommand := runner.commands[len(runner.commands)-1]
 	if strings.Contains(strings.Join(launchCommand.Arguments, "\n"), "never-persist") {
 		t.Fatal("tmux argv contains an inherited environment value")
+	}
+	joinedEnvironment := strings.Join(launchCommand.Env, "\n")
+	if !strings.Contains(joinedEnvironment, "SECRET_SENTINEL=never-persist") {
+		t.Fatal("ordinary inherited worker environment was removed")
+	}
+	if strings.Contains(joinedEnvironment, "SNOWCAT_COCKPIT_MCP_") || strings.Contains(joinedEnvironment, "observer-secret") {
+		t.Fatal("Cockpit observer configuration entered the worker environment")
 	}
 	joined := strings.Join(launchCommand.Arguments, "\n")
 	if !strings.Contains(joined, "work-snowcat-queue") || !strings.Contains(joined, record.ID) || !strings.Contains(joined, "-fix") {
