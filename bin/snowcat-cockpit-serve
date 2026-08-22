@@ -5,7 +5,7 @@ readonly PROGRAM_NAME="${0##*/}"
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly MCP_URL="https://snowcat.goat-snake.ts.net/mcp"
 
-CREDENTIAL_FILE="${SNOWCAT_COCKPIT_OBSERVER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/observer-token.env}"
+CREDENTIAL_FILE="${SNOWCAT_COCKPIT_OBSERVER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env}"
 COCKPIT_BIN="${SNOWCAT_COCKPIT_BIN:-$PROJECT_ROOT/dist/snowcat-cockpit}"
 
 die() {

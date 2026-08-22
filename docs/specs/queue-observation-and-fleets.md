@@ -26,7 +26,7 @@ tools.
 
 `bin/snowcat-cockpit-serve [serve options]` MUST:
 
-- read `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/observer-token.env`, unless a
+- read `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env`, unless a
   test supplies `SNOWCAT_COCKPIT_OBSERVER_ENV`;
 - require a regular, non-symlink credential file owned by the current user
   with mode `0600`;

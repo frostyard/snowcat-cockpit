@@ -4,7 +4,7 @@ set -euo pipefail
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly WRAPPER="$PROJECT_ROOT/bin/snowcat-cockpit-serve"
 readonly TEST_ROOT="$(mktemp -d /tmp/snowcat-cockpit-observer-wrapper.XXXXXX)"
-readonly CREDENTIAL_FILE="$TEST_ROOT/observer-token.env"
+readonly CREDENTIAL_FILE="$TEST_ROOT/profile-observer.env"
 readonly FAKE_COCKPIT="$TEST_ROOT/snowcat-cockpit"
 
 cleanup() {

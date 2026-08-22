@@ -68,7 +68,7 @@ one retained worker. A fleet is capped to eligible work and 12 workers,
 launches once, and never refills.
 
 For the standard local observer file at
-`~/.config/snowcat/observer-token.env`, build once and use the checked-in
+`~/.config/snowcat/profile-observer.env`, build once and use the checked-in
 wrapper. It verifies mode `0600`, reads only the expected export, fixes the MCP
 URL to `https://snowcat.goat-snake.ts.net/mcp`, and removes the source variable
 before starting Cockpit:
