@@ -66,6 +66,15 @@ Code `2.1.239`, Copilot CLI `1.0.80`, Go `1.26.6`, multi-architecture
 base-image manifest digests, and the official amd64/arm64 provider release
 checksums. Launch uses a pre-existing image with `--pull=never`.
 
+Pushing a version tag runs
+`.github/workflows/worker-images.yml`. It publishes provider-specific
+multi-architecture manifests as
+`ghcr.io/frostyard/snowcat-cockpit-worker:<provider>-<version>` and records
+each immutable `name:tag@sha256:<manifest-digest>` reference in the workflow
+summary. Runtime configuration MUST use the recorded digest form. The workflow
+uses GitHub's repository-scoped package token and does not accept a registry
+credential from Cockpit configuration.
+
 The first-slice command baseline is deliberately small: the base shell and
 Unix utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
 patch, jq, ripgrep, unzip, and `column`. A new tool enters this list only after
@@ -158,6 +167,7 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
 | Copilot OCI image | [`oci/Copilot.Containerfile`](../../oci/Copilot.Containerfile) and [`oci/copilot-entrypoint.sh`](../../oci/copilot-entrypoint.sh) |
 | Worker record adapter | Exact normalized request adapter |
 | Runtime credential projection | Fixed provider/GitHub paths and the exact environment-variable names above |
+| Published worker images | `.github/workflows/worker-images.yml` from the three checked-in Containerfiles |
 
 ## References
 

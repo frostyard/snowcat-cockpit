@@ -144,6 +144,12 @@ endpoint resolves without replacing public DNS or using host networking;
 direct CLI launches can set `SNOWCAT_COCKPIT_DOCKER_ADD_HOST` to an explicit
 `hostname:IPv4` value.
 
+Version tags publish all three worker images for `linux/amd64` and
+`linux/arm64` to `ghcr.io/frostyard/snowcat-cockpit-worker`. The
+`Publish worker images` workflow writes the immutable manifest reference for
+each provider to its run summary; configure Cockpit with that full
+`name:tag@sha256:digest` reference rather than the mutable tag alone.
+
 OCI mode requires Linux containers, the selected runtime and its pinned image,
 rootless posture when Podman is selected,
 private regular non-symlink provider files at either

@@ -338,8 +338,10 @@ Managed Docker reviewer `worker-2389dff5cd0bd229` then launched from immutable
 Clix base `c9942bfa0c35`, recorded `docker rootful`, found no eligible
 `pr-review`, claimed nothing, and exited zero. Cockpit's explicit stop accepted
 Docker's already-removed `--rm` container and retained the terminal and
-self-contained workspace. A real Docker delivery pair and multi-architecture
-publication remain trial evidence needed before Phase 5 closes.
+self-contained workspace. The tag-triggered worker-image workflow now defines
+checksum-pinned `linux/amd64` and `linux/arm64` publication to GHCR; its first
+successful tag run still remains required publication evidence. A real Docker
+delivery pair and that tag run remain before Phase 5 closes.
 
 ## Later / ideas
 
