@@ -116,31 +116,33 @@ retains the workspace; cleanup refuses a running or dirty workspace and leaves
 the branch intact. Observe makes one exact, read-only Snowcat correlation call;
 the result is displayed but never written into the worker record.
 
-For an unattended Codex worker, build the first rootless Podman image and pin
-launches to the resulting image ID:
+For unattended Codex and Copilot workers, build the rootless Podman images and
+pin launches to the resulting provider-specific image IDs:
 
 ```bash
 make oci-image
-# Run the export command printed by make oci-image.
+# Run the two export commands printed by make oci-image.
 read -rsp 'Snowcat worker token: ' SNOWCAT_MCP_TOKEN; echo
 export SNOWCAT_MCP_TOKEN
 
 go run ./cmd/snowcat-cockpit worker launch \
   --adapter oci \
-  --provider codex \
+  --provider copilot \
   --role reviewer \
   --repository frostyard/firn \
   --source /path/to/local/firn
 ```
 
-OCI mode currently requires Linux, rootless Podman, private regular non-symlink
-files at `${CODEX_HOME:-$HOME/.codex}/{auth.json,config.toml}` and
+OCI mode currently requires Linux, rootless Podman, the selected pinned image,
+private regular non-symlink provider files at either
+`${CODEX_HOME:-$HOME/.codex}/{auth.json,config.toml}` or
+`${COPILOT_HOME:-$HOME/.copilot}/mcp-config.json`, and
 `${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}/{hosts.yml,config.yml}`,
-and a current Codex profile preflight. The worker receives only those exact
+and a current provider preflight. The worker receives only those exact
 files, its worktree, `SNOWCAT_MCP_TOKEN`, and `GH_TOKEN` by environment-variable
 name. When the checked-in serve wrapper starts with an OCI image configured, it
 projects `GH_TOKEN` from the current `gh` keyring login unless the operator
-already supplied it. Host mode remains the default and the interactive path for Claude and Copilot. See
+already supplied it. Host mode remains the default and the interactive path for Claude. See
 the [rootless OCI worker contract](docs/specs/oci-workers.md) for the complete
 boundary.
 

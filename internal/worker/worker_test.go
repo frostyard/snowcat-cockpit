@@ -341,7 +341,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		Environment: func() []string {
 			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=must-be-filtered"}
 		},
-		OCI: OCIConfig{Image: image, CodexHome: codexHome, GHConfigDir: ghConfig},
+		OCI: OCIConfig{Images: map[string]string{"codex": image}, CodexHome: codexHome, GHConfigDir: ghConfig},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -432,6 +432,77 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 	}
 }
 
+func TestCopilotOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	copilotHome := filepath.Join(root, "copilot")
+	ghConfig := filepath.Join(root, "gh")
+	for _, path := range []string{
+		filepath.Join(copilotHome, "mcp-config.json"),
+		filepath.Join(ghConfig, "hosts.yml"), filepath.Join(ghConfig, "config.yml"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture must never be read"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("f", 40), remoteURL: "git@github.com:frostyard/firn.git"}
+	image := "sha256:" + strings.Repeat("a", 64)
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-copilot-oci-test",
+		Runner: runner, Ready: func(string) error { return nil },
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:   bytes.NewReader([]byte("copilot!")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "GH_TOKEN=github-never-in-argv"}
+		},
+		OCI: OCIConfig{
+			Images: map[string]string{"copilot": image}, CopilotHome: copilotHome, GHConfigDir: ghConfig,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Adapter: AdapterOCI, Provider: "copilot", Role: "reviewer", Repository: "frostyard/firn", Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Provider != "copilot" || record.Model != OCIModelAuto || record.Status != StatusRunning {
+		t.Fatalf("record = %#v", record)
+	}
+	launch := runner.commands[len(runner.commands)-1]
+	argv := strings.Join(launch.Arguments, "\n")
+	for _, required := range []string{
+		image, OCIModelAuto, copilotHome,
+		"/run/cockpit/input/copilot/mcp-config.json", "SNOWCAT_MCP_TOKEN", "GH_TOKEN",
+	} {
+		if !strings.Contains(argv, required) {
+			t.Errorf("Copilot Podman launch is missing %q: %s", required, argv)
+		}
+	}
+	for _, forbidden := range []string{"/run/cockpit/input/codex", "never-in-argv", "github-never-in-argv"} {
+		if strings.Contains(argv, forbidden) {
+			t.Errorf("Copilot Podman launch contains forbidden %q: %s", forbidden, argv)
+		}
+	}
+	stored, err := os.ReadFile(manager.recordPath(record.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stored, []byte("never-in-argv")) || bytes.Contains(stored, []byte("fixture must never be read")) {
+		t.Fatal("Copilot OCI worker record contains credential material")
+	}
+}
+
 func TestOCIPrivateInputsRejectLoosePermissionsAndSymlinks(t *testing.T) {
 	t.Parallel()
 
@@ -497,7 +568,7 @@ func TestOCIReadinessFailsBeforeAllocatingAWorkspace(t *testing.T) {
 		Runner: runner, Ready: func(string) error { return nil },
 		LookPath:    func(name string) (string, error) { return "/tools/" + name, nil },
 		Environment: func() []string { return []string{"PATH=/tools"} },
-		OCI:         OCIConfig{Image: "not-pinned"},
+		OCI:         OCIConfig{Images: map[string]string{"codex": "not-pinned"}},
 	})
 	if err != nil {
 		t.Fatal(err)

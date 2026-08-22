@@ -613,8 +613,12 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 		StateDirectory: stateDirectory,
 		NodeID:         nodeState.NodeID,
 		OCI: worker.OCIConfig{
-			Image:       os.Getenv("SNOWCAT_COCKPIT_OCI_IMAGE"),
+			Images: map[string]string{
+				"codex":   firstNonempty(os.Getenv("SNOWCAT_COCKPIT_OCI_CODEX_IMAGE"), os.Getenv("SNOWCAT_COCKPIT_OCI_IMAGE")),
+				"copilot": os.Getenv("SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE"),
+			},
 			CodexHome:   defaultCodexHome(),
+			CopilotHome: defaultCopilotHome(),
 			GHConfigDir: defaultGHConfigDir(),
 		},
 		Ready: func(providerID string) error {
@@ -636,6 +640,15 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 	})
 }
 
+func firstNonempty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func defaultCodexHome() string {
 	if directory := os.Getenv("CODEX_HOME"); directory != "" {
 		return directory
@@ -645,6 +658,17 @@ func defaultCodexHome() string {
 		return ""
 	}
 	return filepath.Join(home, ".codex")
+}
+
+func defaultCopilotHome() string {
+	if directory := os.Getenv("COPILOT_HOME"); directory != "" {
+		return directory
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".copilot")
 }
 
 func defaultGHConfigDir() string {

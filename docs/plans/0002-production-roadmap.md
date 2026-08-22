@@ -160,14 +160,14 @@ and process termination remain intentionally outside its boundary.
   in host and rootless-container modes with no credential written to Cockpit
   state or back into the host provider configuration.
 
-The first executable slice is now specified and implemented for Codex on
-rootless Podman. The node accepts an explicit `host` or `oci` adapter for one
+The first executable slice is now specified and implemented for Codex and
+Copilot on rootless Podman. The node accepts an explicit `host` or `oci` adapter for one
 worker or a bounded fleet, validates the pinned local image and exact private
 input-file metadata before workspace allocation, and launches a one-shot Codex
 process in a read-only, non-root container with bounded tmpfs and no runtime
 socket, host network, capabilities, or container logs. The image entrypoint
 copies provider and GitHub configuration into the ephemeral home without
-Cockpit reading or persisting it. Docker, Claude, Copilot, multi-architecture
+Cockpit reading or persisting it. Docker, Claude, multi-architecture
 publication, and the host/container implementation-and-review trial remain
 before Phase 5 is complete.
 
@@ -214,6 +214,17 @@ workspaces remained retained. A final hardened-image smoke test then proved Go
 resolution through a login shell, writable home caches and `/var/lib` scratch,
 and the complete small-tool baseline. Snowcat's pass moved PR #67 out of draft;
 GitHub reported it cleanly mergeable with all eight emitted checks successful.
+
+The next provider slice added a separate checksum-pinned Copilot 1.0.80 image
+behind the same OCI adapter. Copilot receives only its exact private
+`mcp-config.json`, the two GitHub CLI files, and the existing token environment
+names; no Codex input is mounted. Its one-shot invocation disables permission
+prompts, remote control, updates, built-in MCP servers, and file logging inside
+the established OCI boundary. A hardened no-claim acceptance run authenticated
+through the in-memory GitHub token, called Snowcat `list_work` through the
+mounted HTTP MCP configuration, made no repository changes, and exited
+normally. The observed Firn queue was empty, so a cross-provider delivery pair
+remains the next live trial rather than an inferred success.
 
 ## Later / ideas
 

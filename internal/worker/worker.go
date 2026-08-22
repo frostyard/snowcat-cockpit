@@ -31,6 +31,7 @@ const (
 	AdapterOCI     = "oci"
 	OCIModelWork   = "gpt-5.6-sol"
 	OCIModelReview = "gpt-5.6-terra"
+	OCIModelAuto   = "auto"
 
 	StatusAllocating = "allocating"
 	StatusRunning    = "running"
@@ -136,8 +137,9 @@ type Config struct {
 }
 
 type OCIConfig struct {
-	Image       string
+	Images      map[string]string
 	CodexHome   string
+	CopilotHome string
 	GHConfigDir string
 }
 
@@ -275,7 +277,7 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	branch := "cockpit/" + workerID
 	model := ""
 	if request.Adapter == AdapterOCI {
-		model = ociModel(request.Role)
+		model = ociModel(request.Provider, request.Role)
 	}
 	now := manager.now().UTC()
 	record := Record{
@@ -636,14 +638,15 @@ func validateRequest(request *LaunchRequest) error {
 }
 
 func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) (string, error) {
-	if request.Provider != "codex" {
-		return "", fmt.Errorf("%w: the first OCI slice supports only codex", ErrNotReady)
+	if request.Provider != "codex" && request.Provider != "copilot" {
+		return "", fmt.Errorf("%w: OCI supports only codex and copilot", ErrNotReady)
 	}
 	if runtime.GOOS != "linux" {
 		return "", fmt.Errorf("%w: the rootless Podman adapter requires Linux", ErrNotReady)
 	}
-	if !imageIDRE.MatchString(manager.oci.Image) {
-		return "", fmt.Errorf("%w: SNOWCAT_COCKPIT_OCI_IMAGE must be pinned by SHA-256", ErrNotReady)
+	image := manager.oci.Images[request.Provider]
+	if !imageIDRE.MatchString(image) {
+		return "", fmt.Errorf("%w: the %s OCI image must be pinned by SHA-256", ErrNotReady, request.Provider)
 	}
 	podmanPath, err := manager.lookPath("podman")
 	if err != nil {
@@ -654,15 +657,22 @@ func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) 
 	if err != nil || strings.TrimSpace(string(output)) != "true" {
 		return "", fmt.Errorf("%w: Podman is not structurally rootless", ErrNotReady)
 	}
-	if _, err := manager.run(ctx, podmanPath, "", hostEnvironment, "image", "exists", manager.oci.Image); err != nil {
+	if _, err := manager.run(ctx, podmanPath, "", hostEnvironment, "image", "exists", image); err != nil {
 		return "", fmt.Errorf("%w: pinned OCI worker image is not available locally", ErrNotReady)
 	}
-	for _, input := range []string{
-		filepath.Join(manager.oci.CodexHome, "auth.json"),
-		filepath.Join(manager.oci.CodexHome, "config.toml"),
+	inputs := []string{
 		filepath.Join(manager.oci.GHConfigDir, "hosts.yml"),
 		filepath.Join(manager.oci.GHConfigDir, "config.yml"),
-	} {
+	}
+	if request.Provider == "codex" {
+		inputs = append(inputs,
+			filepath.Join(manager.oci.CodexHome, "auth.json"),
+			filepath.Join(manager.oci.CodexHome, "config.toml"),
+		)
+	} else {
+		inputs = append(inputs, filepath.Join(manager.oci.CopilotHome, "mcp-config.json"))
+	}
+	for _, input := range inputs {
 		if err := validatePrivateInput(input); err != nil {
 			return "", fmt.Errorf("%w: OCI input %s is unavailable: %v", ErrNotReady, filepath.Base(input), err)
 		}
@@ -764,7 +774,7 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 	inputMount := func(source, destination string) string {
 		return "type=bind,source=" + source + ",destination=" + destination + ",ro=true"
 	}
-	return []string{
+	arguments := []string{
 		"run", "--rm", "--pull=never", "--tty",
 		"--name", manager.containerName(record.ID),
 		"--read-only", "--read-only-tmpfs=false",
@@ -775,17 +785,30 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 		"--tmpfs=/tmp:rw,size=2g,mode=1777",
 		"--tmpfs=/var/lib:rw,size=512m,mode=1777",
 		"--mount", "type=bind,source=" + record.Workspace + ",destination=/workspace,rw=true",
-		"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "auth.json"), "/run/cockpit/input/codex/auth.json"),
-		"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "config.toml"), "/run/cockpit/input/codex/config.toml"),
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "hosts.yml"), "/run/cockpit/input/gh/hosts.yml"),
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "config.yml"), "/run/cockpit/input/gh/config.yml"),
+	}
+	if record.Provider == "codex" {
+		arguments = append(arguments,
+			"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "auth.json"), "/run/cockpit/input/codex/auth.json"),
+			"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "config.toml"), "/run/cockpit/input/codex/config.toml"),
+		)
+	} else {
+		arguments = append(arguments,
+			"--mount", inputMount(filepath.Join(manager.oci.CopilotHome, "mcp-config.json"), "/run/cockpit/input/copilot/mcp-config.json"),
+		)
+	}
+	return append(arguments,
 		"--env", "SNOWCAT_MCP_TOKEN",
 		"--env", "GH_TOKEN",
-		manager.oci.Image, prompt, record.Model,
-	}
+		manager.oci.Images[record.Provider], prompt, record.Model,
+	)
 }
 
-func ociModel(role string) string {
+func ociModel(provider, role string) string {
+	if provider == "copilot" {
+		return OCIModelAuto
+	}
 	if role == "reviewer" {
 		return OCIModelReview
 	}

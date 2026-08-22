@@ -377,7 +377,7 @@ function populateProviders(prefix) {
   const provider = byId(`${prefix}-provider`);
   provider.replaceChildren();
   const adapter = byId(`${prefix}-adapter`).value;
-  const candidates = adapter === "oci" ? readyProviders.filter((candidate) => candidate.id === "codex") : readyProviders;
+  const candidates = adapter === "oci" ? readyProviders.filter((candidate) => ["codex", "copilot"].includes(candidate.id)) : readyProviders;
   for (const candidate of candidates) {
     const option = document.createElement("option");
     option.value = candidate.id;
