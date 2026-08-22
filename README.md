@@ -116,6 +116,10 @@ not supply a path. **Start all enrolled repositories** then:
 4. remains running while proposals await human admission or Snowcat's verifier
    creates delayed review work.
 
+After the start proof expires, Cockpit refreshes a provider only when its lane
+has eligible work. An idle campaign does not spend inference keeping receipts
+warm.
+
 The local enrollment is execution configuration, not a copy or assertion of
 Snowcat's control-plane enrollment. Snowcat still decides claim eligibility.
 Campaign stop prevents new launches but never stops a worker or deletes a

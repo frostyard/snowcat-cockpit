@@ -60,6 +60,11 @@ runtime, provider, model, source, and immutable base. A launch failure stops
 that repository/role for the current tick. The next tick may retry after the
 minimum interval.
 
+Provider proof is demand-driven after campaign start. A receipt approaching
+expiry is refreshed only when fresh observation finds eligible work for that
+provider; an idle campaign does not periodically invoke coding agents merely
+to keep receipts warm.
+
 Exited workers do not prove that Snowcat work completed. Attempt correlation is
 an independent, delayed observation and may remain unmatched. Fresh queue state
 is the only input to later capacity decisions.

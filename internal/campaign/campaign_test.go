@@ -165,6 +165,30 @@ func TestSharedFailedProviderPreflightRunsOnceAtStart(t *testing.T) {
 	}
 }
 
+func TestExpiredPreflightRefreshesOnlyWhenWorkIsEligible(t *testing.T) {
+	preflights := &fakePreflights{}
+	controller := newTestController(t, &fakeRepositories{}, preflights, &fakeQueue{}, &fakeWorkers{})
+	lane := Lane{Provider: "claude", MCPServer: "snowcat", Capacity: 1}
+	repositories := []managedrepo.Record{{Repository: "frostyard/firn"}}
+	expiries := map[string]time.Time{"claude\x00snowcat": time.Now().Add(-time.Minute)}
+	if controller.ensureLanePreflight(context.Background(), lane, repositories, expiries, false) {
+		t.Fatal("expired idle lane unexpectedly remained ready")
+	}
+	preflights.mu.Lock()
+	if len(preflights.calls) != 0 {
+		t.Fatalf("idle lane made preflight calls: %q", preflights.calls)
+	}
+	preflights.mu.Unlock()
+	if !controller.ensureLanePreflight(context.Background(), lane, repositories, expiries, true) {
+		t.Fatal("eligible lane did not refresh proof")
+	}
+	preflights.mu.Lock()
+	defer preflights.mu.Unlock()
+	if len(preflights.calls) != 1 {
+		t.Fatalf("eligible lane preflight calls = %q, want one", preflights.calls)
+	}
+}
+
 func TestNewMarksAnActiveCampaignInterrupted(t *testing.T) {
 	stateDirectory := t.TempDir()
 	content, err := json.Marshal(Record{ID: "campaign-old", Status: StatusRunning, Detail: "running"})

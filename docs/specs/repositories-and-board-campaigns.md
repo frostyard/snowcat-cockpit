@@ -86,7 +86,9 @@ State files are mode `0600` where Unix permissions apply.
    repositories with concurrency at most four.
 3. Start refreshes each distinct provider/MCP-server pair. One failed live
    proof receives exactly one immediate retry. A failed pair is retried no
-   sooner than five minutes; a ready receipt is refreshed before expiry.
+   sooner than five minutes. After the start proof expires, the controller
+   refreshes it only when that provider's lane has eligible work; an empty
+   board consumes no periodic provider inference.
 4. Each tick observes every ready repository with concurrency at most four and
    never faster than the configured interval.
 5. For each lane, launches are capped by eligible queued work and the lane's

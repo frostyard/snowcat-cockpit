@@ -292,7 +292,6 @@ func (controller *Controller) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			readyRepositories = controller.retryRepositorySetup(ctx, readyRepositories)
-			providerExpiries = controller.refreshExpiringPreflights(ctx, readyRepositories, providerExpiries)
 		}
 	}
 }
@@ -413,33 +412,6 @@ func (controller *Controller) refreshPreflights(ctx context.Context, repositorie
 	return result
 }
 
-func (controller *Controller) refreshExpiringPreflights(ctx context.Context, repositories []managedrepo.Record, expiries map[string]time.Time) map[string]time.Time {
-	if len(repositories) == 0 {
-		return expiries
-	}
-	now := controller.now().UTC()
-	for _, lane := range controller.lanes() {
-		key := lane.Provider + "\x00" + lane.MCPServer
-		expiresAt, ready := expiries[key]
-		if ready && expiresAt.After(now.Add(preflightRefreshWindow)) {
-			continue
-		}
-		if controller.inNamedBackoff("preflight\x00" + key) {
-			continue
-		}
-		preflight, err := controller.preflights.Refresh(ctx, lane.Provider, lane.MCPServer, repositories[0].Repository)
-		if err != nil {
-			delete(expiries, key)
-			controller.setNamedBackoff("preflight\x00" + key)
-			controller.updateProvider(ProviderStatus{Provider: lane.Provider, MCPServer: lane.MCPServer, Status: StatusDegraded, Detail: "provider preflight refresh failed after two attempts"})
-			continue
-		}
-		expiries[key] = preflight.ExpiresAt
-		controller.updateProvider(ProviderStatus{Provider: lane.Provider, MCPServer: lane.MCPServer, Status: preflight.Status, Detail: preflight.Detail, ExpiresAt: preflight.ExpiresAt})
-	}
-	return expiries
-}
-
 func (controller *Controller) reconcile(ctx context.Context, repositories []managedrepo.Record, expiries map[string]time.Time) {
 	if ctx.Err() != nil {
 		return
@@ -500,7 +472,13 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 
 	for _, role := range []queueview.Role{queueview.RoleDiscoverer, queueview.RoleImplementer, queueview.RoleReviewer} {
 		lane := controller.lane(role)
-		if _, ready := expiries[lane.Provider+"\x00"+lane.MCPServer]; !ready {
+		eligible := 0
+		for _, observed := range byRepository {
+			if observed.err == nil {
+				eligible += observed.snapshot.Counts[role]
+			}
+		}
+		if !controller.ensureLanePreflight(ctx, lane, repositories, expiries, eligible > 0) {
 			continue
 		}
 		remaining := lane.Capacity - active[role]
@@ -539,6 +517,40 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		}
 	}
 	controller.setRunningStatus(true)
+}
+
+func (controller *Controller) ensureLanePreflight(ctx context.Context, lane Lane, repositories []managedrepo.Record, expiries map[string]time.Time, eligible bool) bool {
+	key := lane.Provider + "\x00" + lane.MCPServer
+	expiresAt, ready := expiries[key]
+	if ready && expiresAt.After(controller.now().UTC().Add(preflightRefreshWindow)) {
+		return true
+	}
+	if !eligible || len(repositories) == 0 {
+		controller.updateProvider(ProviderStatus{
+			Provider: lane.Provider, MCPServer: lane.MCPServer, Status: "refresh-needed",
+			Detail: "live proof will refresh when eligible work appears", ExpiresAt: expiresAt,
+		})
+		return false
+	}
+	if controller.inNamedBackoff("preflight\x00" + key) {
+		return false
+	}
+	preflight, err := controller.preflights.Refresh(ctx, lane.Provider, lane.MCPServer, repositories[0].Repository)
+	if err != nil {
+		delete(expiries, key)
+		controller.setNamedBackoff("preflight\x00" + key)
+		controller.updateProvider(ProviderStatus{
+			Provider: lane.Provider, MCPServer: lane.MCPServer, Status: StatusDegraded,
+			Detail: "provider preflight refresh failed after two attempts",
+		})
+		return false
+	}
+	expiries[key] = preflight.ExpiresAt
+	controller.updateProvider(ProviderStatus{
+		Provider: lane.Provider, MCPServer: lane.MCPServer, Status: preflight.Status,
+		Detail: preflight.Detail, ExpiresAt: preflight.ExpiresAt,
+	})
+	return true
 }
 
 func validateRequest(request *Request) error {
