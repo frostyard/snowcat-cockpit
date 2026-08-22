@@ -308,9 +308,19 @@ exited zero and Cockpit retained its terminal and workspace.
 
 That successful run also exposed a resource-sizing concern: Clix's full Go and
 golangci-lint caches exhausted the 512 MiB home tmpfs. Claude recovered by
-redirecting those caches to the existing 2 GiB `/tmp` tmpfs, but Cockpit should
-make cache placement or sizing explicit before calling the OCI worker profile
-production-ready.
+redirecting those caches to the existing 2 GiB `/tmp` tmpfs. Cockpit now gives
+the bounded provider home the same 2 GiB ceiling, preserving the read-only root
+and explicit resource boundary while accommodating the measured workload.
+
+Copilot reviewer `worker-7fb8fd29f5936e06` then independently claimed the
+generated `pr-review`, reviewed Clix PR #74 at head `1ad19e0`, exercised the
+repository check path, and reported `decision: pass` with no blockers or
+advisories. All seven GitHub checks completed successfully and GitHub reported
+the pull request cleanly mergeable. This closes the cross-provider Claude
+implementation/Copilot review loop. The preflight also showed that configured
+MCP server names are provider-local: this Copilot installation calls the server
+`snowcat-mcp`, while Claude calls it `snowcat`; the explicit preflight must use
+the provider's configured name.
 
 ## Later / ideas
 

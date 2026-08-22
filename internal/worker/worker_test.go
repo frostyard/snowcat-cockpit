@@ -570,6 +570,7 @@ func TestClaudeOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 	for _, required := range []string{
 		image, OCIModelOpus, claudeHome, "/run/cockpit/input/claude/.credentials.json",
 		"SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "GH_TOKEN",
+		"--tmpfs=/home/cockpit:rw,size=2g,mode=1777",
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Claude Podman launch is missing %q: %s", required, argv)

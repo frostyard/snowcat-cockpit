@@ -858,7 +858,7 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 		"--userns=keep-id:uid=1000,gid=1000", "--user=1000:1000",
 		"--cap-drop=ALL", "--security-opt=no-new-privileges",
 		"--pids-limit=512", "--log-driver=none",
-		"--tmpfs=/home/cockpit:rw,size=512m,mode=1777",
+		"--tmpfs=/home/cockpit:rw,size=2g,mode=1777",
 		"--tmpfs=/tmp:rw,size=2g,mode=1777",
 		"--tmpfs=/var/lib:rw,size=512m,mode=1777",
 		"--mount", "type=bind,source=" + record.Workspace + ",destination=/workspace,rw=true",

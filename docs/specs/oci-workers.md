@@ -62,7 +62,7 @@ patch, jq, ripgrep, unzip, and `column`. A new tool enters this list only after
 a repository contract or retained worker terminal demonstrates the need.
 Commands that a provider runs through a login shell MUST still resolve `go` and
 `gofmt` through `/usr/local/bin`; `GOPATH` and `GOCACHE` MUST live beneath the
-bounded writable home tmpfs rather than the read-only image filesystem.
+bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
 
 ## Rules
 
@@ -85,9 +85,9 @@ bounded writable home tmpfs rather than the read-only image filesystem.
    host networking.
 4. The only host filesystem mounts are the exact worker workspace read-write at
    `/workspace` and the provider's exact input files read-only below
-   `/run/cockpit/input`. The container home, `/tmp`, and test scratch at
-   `/var/lib` MUST be bounded tmpfs mounts. The tmpfs roots MAY be mode `1777`
-   for rootless-runtime
+   `/run/cockpit/input`. The container home and `/tmp` MUST be bounded 2 GiB
+   tmpfs mounts, and test scratch at `/var/lib` MUST be a bounded 512 MiB tmpfs
+   mount. The tmpfs roots MAY be mode `1777` for rootless-runtime
    portability; the non-root entrypoint MUST create the actual provider and
    GitHub configuration directories as mode `0700` beneath it.
 5. The runtime receives `--env SNOWCAT_MCP_TOKEN` and `--env GH_TOKEN` with no
