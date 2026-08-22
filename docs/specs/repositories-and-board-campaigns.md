@@ -91,9 +91,11 @@ State files are mode `0600` where Unix permissions apply.
    board consumes no periodic provider inference.
 4. Each tick observes every ready repository with concurrency at most four and
    never faster than the configured interval.
-5. For each lane, launches are capped by eligible queued work and the lane's
+5. For each lane, launches are capped by eligible claimable work and the lane's
    remaining global capacity after all active node workers in that lane are
-   counted. Repository iteration is sorted and round-robin by pass.
+   counted. Claimable work is queued work plus claimed work whose newest
+   Snowcat attempt is expired. Repository iteration is sorted and round-robin
+   by pass.
 6. Every launch uses the repository's prepared immutable base commit and the
    campaign's exact adapter, runtime, and lane provider. The worker independently
    claims at most one item through Snowcat MCP.
@@ -112,7 +114,8 @@ State files are mode `0600` where Unix permissions apply.
 ## References
 
 - Rationale:
-  [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md)
+  [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md),
+  [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md)
 - Context: [board campaigns](../design/board-campaigns.md),
   [Cockpit node](../design/node.md)
 - Worker contracts: [managed workers](managed-workers.md),

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestHTTPObserverTakesOneBoundedSnapshot(t *testing.T) {
+func TestHTTPObserverTakesOneBoundedClaimableSnapshot(t *testing.T) {
 	t.Parallel()
 
 	var calls atomic.Int32
@@ -28,21 +28,33 @@ func TestHTTPObserverTakesOneBoundedSnapshot(t *testing.T) {
 		if input.Method != "tools/call" || input.Params.Name != "list_work" {
 			t.Fatalf("request = %#v", input)
 		}
-		if input.Params.Arguments.Status != "queued" || input.Params.Arguments.Repository != "frostyard/firn" || input.Params.Arguments.Limit != MaxItems {
+		if input.Params.Arguments.Repository != "frostyard/firn" || input.Params.Arguments.Limit != MaxItems {
 			t.Fatalf("arguments = %#v", input.Params.Arguments)
+		}
+		var work string
+		switch input.Params.Arguments.Status {
+		case "queued":
+			work = `[
+				{"id":"1","repository":"frostyard/firn","kind":"quality-gap-discovery","priority":4,"status":"queued","allowedActions":["read","create-followup"],"requiredArtifact":"none"},
+				{"id":"2","repository":"frostyard/firn","kind":"ci-signal-fix","priority":3,"status":"queued","allowedActions":["read","write","run-tests","open-pr"],"requiredArtifact":"pull-request"},
+				{"id":"3","repository":"frostyard/firn","kind":"pr-review","priority":2,"status":"queued","allowedActions":["read","run-tests"],"requiredArtifact":"none"},
+				{"id":"4","repository":"frostyard/firn","kind":"implementation","priority":1,"status":"queued","allowedActions":["read","write","run-tests","open-pr"],"requiredArtifact":"pull-request"},
+				{"id":"5","repository":"frostyard/firn","kind":"release-needed","priority":0,"status":"queued","allowedActions":["read","write","open-pr"],"requiredArtifact":"none"},
+				{"id":"6","repository":"frostyard/firn","kind":"future-change","priority":0,"status":"queued","allowedActions":["read","write"],"requiredArtifact":"none"}
+			]`
+		case "claimed":
+			work = `[
+				{"id":"7","repository":"frostyard/firn","kind":"pr-review-fix","priority":5,"status":"claimed","allowedActions":["read","write","run-tests","open-pr"],"requiredArtifact":"pull-request","attempts":[{"sequence":40,"claimedAt":"2026-08-21T17:00:00Z","label":"worker-expired","outcome":"expired","endedAt":"2026-08-21T18:00:00Z"}]},
+				{"id":"8","repository":"frostyard/firn","kind":"quality-gap-discovery","priority":5,"status":"claimed","allowedActions":["read","create-followup"],"requiredArtifact":"none","attempts":[{"sequence":41,"claimedAt":"2026-08-21T18:30:00Z","label":"worker-live"}]}
+			]`
+		default:
+			t.Fatalf("unexpected status = %q", input.Params.Arguments.Status)
 		}
 		payload, err := json.Marshal(map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"result": map[string]any{
-				"content": []map[string]string{{"type": "text", "text": `[
-					{"id":"1","repository":"frostyard/firn","kind":"quality-gap-discovery","priority":4,"status":"queued","allowedActions":["read","create-followup"],"requiredArtifact":"none"},
-					{"id":"2","repository":"frostyard/firn","kind":"ci-signal-fix","priority":3,"status":"queued","allowedActions":["read","write","run-tests","open-pr"],"requiredArtifact":"pull-request"},
-					{"id":"3","repository":"frostyard/firn","kind":"pr-review","priority":2,"status":"queued","allowedActions":["read","run-tests"],"requiredArtifact":"none"},
-					{"id":"4","repository":"frostyard/firn","kind":"implementation","priority":1,"status":"queued","allowedActions":["read","write","run-tests","open-pr"],"requiredArtifact":"pull-request"},
-					{"id":"5","repository":"frostyard/firn","kind":"release-needed","priority":0,"status":"queued","allowedActions":["read","write","open-pr"],"requiredArtifact":"none"},
-					{"id":"6","repository":"frostyard/firn","kind":"future-change","priority":0,"status":"queued","allowedActions":["read","write"],"requiredArtifact":"none"}
-				]`}},
+				"content": []map[string]string{{"type": "text", "text": work}},
 			},
 		})
 		if err != nil {
@@ -65,13 +77,13 @@ func TestHTTPObserverTakesOneBoundedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("HTTP calls = %d, want 1", calls.Load())
+	if calls.Load() != 2 {
+		t.Fatalf("HTTP calls = %d, want 2", calls.Load())
 	}
-	if snapshot.ObservedAt != now || snapshot.Truncated || len(snapshot.Items) != 6 {
+	if snapshot.ObservedAt != now || snapshot.Truncated || len(snapshot.Items) != 7 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
-	if snapshot.Counts[RoleDiscoverer] != 1 || snapshot.Counts[RoleImplementer] != 2 || snapshot.Counts[RoleReviewer] != 1 || snapshot.Counts[RoleUnassigned] != 1 || snapshot.Flagged != 1 {
+	if snapshot.Counts[RoleDiscoverer] != 1 || snapshot.Counts[RoleImplementer] != 3 || snapshot.Counts[RoleReviewer] != 1 || snapshot.Counts[RoleUnassigned] != 1 || snapshot.Flagged != 1 {
 		t.Fatalf("counts = %#v", snapshot.Counts)
 	}
 	if snapshot.Items[1].RequiredArtifact != "pull-request" || snapshot.Items[1].Role != RoleImplementer || snapshot.Items[1].Contract != "ready" {
@@ -79,6 +91,27 @@ func TestHTTPObserverTakesOneBoundedSnapshot(t *testing.T) {
 	}
 	if snapshot.Items[0].Contract != "ready" {
 		t.Fatalf("discovery contract = %#v", snapshot.Items[0])
+	}
+	if snapshot.Items[6].ID != "7" || snapshot.Items[6].Kind != "pr-review-fix" {
+		t.Fatalf("expired claim = %#v", snapshot.Items[6])
+	}
+}
+
+func TestCurrentAttemptExpiredUsesNewestSequence(t *testing.T) {
+	t.Parallel()
+	claimedAt := time.Date(2026, 8, 21, 18, 0, 0, 0, time.UTC)
+	endedAt := claimedAt.Add(time.Hour)
+	item := remoteItem{Status: "claimed", Attempts: []WorkAttempt{
+		{Sequence: 2, ClaimedAt: claimedAt},
+		{Sequence: 1, ClaimedAt: claimedAt.Add(-2 * time.Hour), Outcome: "expired", EndedAt: &endedAt},
+	}}
+	if expired, err := currentAttemptExpired(item); err != nil || expired {
+		t.Fatalf("live latest attempt = %v, %v", expired, err)
+	}
+	item.Attempts[0].Outcome = "expired"
+	item.Attempts[0].EndedAt = &endedAt
+	if expired, err := currentAttemptExpired(item); err != nil || !expired {
+		t.Fatalf("expired latest attempt = %v, %v", expired, err)
 	}
 }
 

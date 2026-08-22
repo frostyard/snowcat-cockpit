@@ -39,6 +39,7 @@ The node reads OCI configuration only from its starting environment:
 | `SNOWCAT_MCP_TOKEN` | yes | Inherited by name; its value MUST NOT enter OCI argv, state, or logs |
 | `SNOWCAT_MCP_URL` | for Claude | Inherited by name; the secure serve wrapper derives it from its fixed MCP URL |
 | `GH_TOKEN` | yes | Inherited by name; may be supplied by the operator or projected from the host GitHub CLI keyring by the secure serve wrapper |
+| `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | image-owned for Claude | Fixed to `1`; never inherited from the host |
 
 The implemented slice supports `provider: codex|claude|copilot`,
 `adapter: oci`, and explicit `runtime: podman|docker`. Podman MUST be rootless.
@@ -137,7 +138,9 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    ephemeral user skill root and supplies an image-owned instruction to read
    repository `AGENTS.md` and `CLAUDE.md`; repository Claude settings, hooks,
    plugins, and local overrides are not loaded. These unattended permission
-   modes are permitted only inside the complete OCI boundary above.
+   modes are permitted only inside the complete OCI boundary above. Claude
+   background-task functionality MUST be disabled so print-mode exit cannot
+   abandon tests or subagents that still own delivery work.
 7. The foreground selected-runtime process runs in the worker's dedicated tmux pane with
    `remain-on-exit`. Cockpit MUST NOT call `podman logs` or persist provider
    output. A normal one-shot exit reconciles to the existing `exited` process
@@ -174,6 +177,7 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
 ## References
 
 - Rationale: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
+- Lifecycle hardening: [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md)
 - Workspace rationale: [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
 - Context: [Cockpit node](../design/node.md)
 - Base lifecycle: [managed workers](managed-workers.md)

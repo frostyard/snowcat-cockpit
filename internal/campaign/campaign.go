@@ -474,7 +474,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		}
 		controller.updateRepository(observed.repository.Repository, func(state *RepositoryStatus) {
 			state.Status = StatusRunning
-			state.Detail = fmt.Sprintf("queued: %d discoverer, %d implementer, %d reviewer", observed.snapshot.Counts[queueview.RoleDiscoverer], observed.snapshot.Counts[queueview.RoleImplementer], observed.snapshot.Counts[queueview.RoleReviewer])
+			state.Detail = fmt.Sprintf("claimable: %d discoverer, %d implementer, %d reviewer", observed.snapshot.Counts[queueview.RoleDiscoverer], observed.snapshot.Counts[queueview.RoleImplementer], observed.snapshot.Counts[queueview.RoleReviewer])
 			state.ObservedAt = observed.snapshot.ObservedAt
 		})
 	}

@@ -44,6 +44,7 @@ COPY --chmod=0755 oci/claude-entrypoint.sh /usr/local/bin/cockpit-entrypoint
 
 ENV HOME=/home/cockpit \
     CLAUDE_CONFIG_DIR=/home/cockpit/.claude \
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 \
     GH_CONFIG_DIR=/home/cockpit/.config/gh \
     GOPATH=/home/cockpit/go \
     GOCACHE=/home/cockpit/.cache/go-build

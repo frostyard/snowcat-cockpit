@@ -87,10 +87,11 @@ HTTP operations:
    implementer MUST release a claimed change item before substantive work when
    `open-pr` or `requiredArtifact: pull-request` is absent; the role requires a
    deliverable pull-request artifact and never widens the item's authority.
-   Its claim set is the exact observed queued kinds after excluding discovery,
-   review, and human-operated `release-needed` work; it MUST NOT use a closed
-   implementation-kind whitelist. The worker MUST keep the preallocated current
-   branch. When `open-pr` and `requiredArtifact: pull-request` are both present,
+   Its claim set is the exact observed claimable kinds—queued plus claimed
+   items whose newest attempt is expired—after excluding discovery, review,
+   and human-operated `release-needed` work; it MUST NOT use a closed
+   implementation-kind whitelist. The worker MUST keep the preallocated
+   current branch. When `open-pr` and `requiredArtifact: pull-request` are both present,
    Cockpit's prompt MUST state that the operator has authorized committing,
    pushing that branch, and opening the required draft pull request without a
    second permission prompt.
@@ -148,7 +149,8 @@ HTTP operations:
 
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
   [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md),
-  [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
+  [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md),
+  [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md)
 - Context: [Cockpit node](../design/node.md)
 - Built in: [Production roadmap, Phase 3](../plans/0002-production-roadmap.md#phase-3--launch-one-managed-worker)
 - Unattended boundary: [rootless OCI workers](oci-workers.md)

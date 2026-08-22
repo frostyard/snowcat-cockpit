@@ -131,18 +131,31 @@ func (observer *HTTPObserver) Observe(ctx context.Context, repository string) (S
 		return Snapshot{}, fmt.Errorf("%w: repository must be owner/name", ErrInvalid)
 	}
 
-	remoteItems, err := observer.list(ctx, listArguments{Status: "queued", Repository: repository, Limit: MaxItems})
+	queuedItems, err := observer.list(ctx, listArguments{Status: "queued", Repository: repository, Limit: MaxItems})
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if len(remoteItems) > MaxItems {
-		return Snapshot{}, fmt.Errorf("%w: Snowcat list_work exceeded the requested limit", ErrUnavailable)
+	claimedItems, err := observer.list(ctx, listArguments{Status: "claimed", Repository: repository, Limit: MaxItems})
+	if err != nil {
+		return Snapshot{}, err
 	}
+	remoteItems := make([]remoteItem, 0, len(queuedItems)+len(claimedItems))
+	remoteItems = append(remoteItems, queuedItems...)
+	for _, remote := range claimedItems {
+		expired, err := currentAttemptExpired(remote)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if expired {
+			remoteItems = append(remoteItems, remote)
+		}
+	}
+
 	items := make([]Item, 0, len(remoteItems))
 	counts := map[Role]int{RoleDiscoverer: 0, RoleImplementer: 0, RoleReviewer: 0, RoleUnassigned: 0}
 	flagged := 0
 	for _, remote := range remoteItems {
-		if remote.Repository != repository || remote.Status != "queued" {
+		if remote.Repository != repository || (remote.Status != "queued" && remote.Status != "claimed") || remote.ID == "" || remote.Kind == "" {
 			return Snapshot{}, fmt.Errorf("%w: Snowcat list_work returned an item outside the requested projection", ErrUnavailable)
 		}
 		role := Classify(remote.Kind)
@@ -167,11 +180,44 @@ func (observer *HTTPObserver) Observe(ctx context.Context, repository string) (S
 	return Snapshot{
 		Repository: repository,
 		ObservedAt: observer.now().UTC(),
-		Truncated:  len(items) == MaxItems,
+		Truncated:  len(queuedItems) == MaxItems || len(claimedItems) == MaxItems,
 		Flagged:    flagged,
 		Counts:     counts,
 		Items:      items,
 	}, nil
+}
+
+func currentAttemptExpired(item remoteItem) (bool, error) {
+	if item.Status != "claimed" || len(item.Attempts) == 0 {
+		return false, fmt.Errorf("%w: Snowcat returned an incomplete claimed item", ErrUnavailable)
+	}
+	latest := item.Attempts[0]
+	if latest.Sequence < 1 || latest.ClaimedAt.IsZero() {
+		return false, fmt.Errorf("%w: Snowcat returned an incomplete claimed attempt", ErrUnavailable)
+	}
+	seenSequences := map[int64]struct{}{latest.Sequence: {}}
+	for _, attempt := range item.Attempts[1:] {
+		if attempt.Sequence < 1 || attempt.ClaimedAt.IsZero() {
+			return false, fmt.Errorf("%w: Snowcat returned an incomplete claimed attempt", ErrUnavailable)
+		}
+		if _, exists := seenSequences[attempt.Sequence]; exists {
+			return false, fmt.Errorf("%w: Snowcat returned duplicate claimed attempt sequences", ErrUnavailable)
+		}
+		seenSequences[attempt.Sequence] = struct{}{}
+		if attempt.Sequence > latest.Sequence {
+			latest = attempt
+		}
+	}
+	if latest.Outcome == "" {
+		if latest.EndedAt != nil {
+			return false, fmt.Errorf("%w: Snowcat returned an inconsistent active attempt", ErrUnavailable)
+		}
+		return false, nil
+	}
+	if latest.Outcome != "expired" || latest.EndedAt == nil || latest.EndedAt.Before(latest.ClaimedAt) {
+		return false, fmt.Errorf("%w: Snowcat returned an inconsistent claimed attempt", ErrUnavailable)
+	}
+	return true, nil
 }
 
 func (observer *HTTPObserver) ObserveWorker(ctx context.Context, repository, workerID string) (WorkerObservation, error) {

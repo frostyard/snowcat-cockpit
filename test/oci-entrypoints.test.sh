@@ -21,5 +21,6 @@ assert_contains "$CLAUDE_ENTRYPOINT" '--append-system-prompt-file /usr/local/sha
 assert_contains "$CLAUDE_ENTRYPOINT" 'for skill in work-snowcat-queue work-snowcat-without-reviews review-snowcat-queue; do'
 assert_contains "$CLAUDE_ENTRYPOINT" '[[ -f "$source_skill" && ! -L "$source_skill" ]]'
 assert_contains "$CLAUDE_CONTAINERFILE" 'COPY --chmod=0644 oci/claude-system-prompt.txt /usr/local/share/snowcat-cockpit/claude-system-prompt.txt'
+assert_contains "$CLAUDE_CONTAINERFILE" 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1'
 
 printf 'PASS: OCI entrypoints\n'

@@ -117,3 +117,5 @@ state separately rather than infer a relationship it cannot prove.
   [ADR-0002](0002-build-a-node-local-cockpit-appliance.md)
 - Snowcat contracts: ADR-0063 (authenticated HTTP MCP) and ADR-0069
   (`requiredArtifact`) in `frostyard/snowcat`
+- Claimable observation extension:
+  [ADR-0009](0009-observe-reclaimable-snowcat-work.md)

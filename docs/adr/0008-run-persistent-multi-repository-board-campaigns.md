@@ -97,3 +97,4 @@ but does not stop workers or clean workspaces.
 - Builds on: [ADR-0003](0003-isolate-each-managed-worker-terminal.md),
   [ADR-0004](0004-observe-snowcat-once-to-plan-bounded-fleets.md),
   [ADR-0005](0005-isolate-unattended-workers-in-rootless-oci.md)
+- Reclaim extension: [ADR-0009](0009-observe-reclaimable-snowcat-work.md)

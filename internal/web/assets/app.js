@@ -329,7 +329,7 @@ function renderQueue(snapshot) {
   }
   const observedAt = new Date(snapshot.observedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const flagged = snapshot.flagged ? ` · ${snapshot.flagged} contract ${snapshot.flagged === 1 ? "warning" : "warnings"} withheld` : "";
-  byId("queue-summary").textContent = `${snapshot.items.length} queued at ${observedAt}${snapshot.truncated ? " · truncated at 100" : " · complete bounded response"}${flagged}`;
+  byId("queue-summary").textContent = `${snapshot.items.length} claimable at ${observedAt}${snapshot.truncated ? " · one projection truncated at 100" : " · complete bounded response"}${flagged}`;
   byId("queue-repository").value = snapshot.repository;
 
   const tbody = byId("queue-body");
@@ -339,7 +339,7 @@ function renderQueue(snapshot) {
     const cell = document.createElement("td");
     cell.colSpan = 5;
     cell.className = "ph-empty";
-    cell.textContent = `No queued work observed for ${snapshot.repository}.`;
+    cell.textContent = `No claimable work observed for ${snapshot.repository}.`;
     row.append(cell);
     tbody.append(row);
   }

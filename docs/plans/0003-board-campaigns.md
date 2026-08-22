@@ -63,6 +63,15 @@ later reconciliation backs off that repository/role for five minutes. Worker
 terminals and workspaces remain retained, and the startup exit still does not
 assert a Snowcat outcome.
 
+A later Claude trial retained three exited workers whose Snowcat attempts
+expired. Each provider had moved tests or subagent work into the background;
+Claude print mode reached its ten-minute background wait ceiling and exited
+before commit, pull-request creation, or completion reporting. The campaign's
+queued-only projection then hid those reclaimable claimed items. ADR-0009
+records the durable corrections: observe Snowcat's expired-attempt projection
+alongside queued work, and disable background tasks in the unattended Claude
+image.
+
 ## Later / ideas
 
 - Import repository slugs from Snowcat if it adds a scoped enrollment-read MCP
@@ -77,6 +86,7 @@ assert a Snowcat outcome.
   [managed repositories and board campaigns](../specs/repositories-and-board-campaigns.md)
 - Rationale:
   [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md)
+  and [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md)
 - Existing contracts:
   [provider preflight](../specs/provider-preflight.md),
   [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md),

@@ -52,7 +52,7 @@ One scheduler tick observes every ready repository with bounded concurrency.
 For each role it calculates:
 
 ```text
-launchable = min(queued eligible items, configured capacity - active workers)
+launchable = min(claimable eligible items, configured capacity - active workers)
 ```
 
 It launches ordinary managed workers, preserving the selected adapter,
@@ -64,6 +64,11 @@ Provider proof is demand-driven after campaign start. A receipt approaching
 expiry is refreshed only when fresh observation finds eligible work for that
 provider; an idle campaign does not periodically invoke coding agents merely
 to keep receipts warm.
+
+Claimable means a logically queued item or a logically claimed item whose
+newest Snowcat attempt is expired. Cockpit reads both bounded projections and
+uses Snowcat's attempt outcome; it never computes lease expiry or requeues the
+item itself.
 
 Exited workers do not prove that Snowcat work completed. Attempt correlation is
 an independent, delayed observation and may remain unmatched. Fresh queue state
@@ -102,7 +107,8 @@ workspace remain retained for explicit operator action.
 ## References
 
 - Rationale:
-  [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md)
+  [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md),
+  [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md)
 - Existing contracts:
   [managed repositories and board campaigns](../specs/repositories-and-board-campaigns.md),
   [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md),

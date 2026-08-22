@@ -59,7 +59,7 @@ networking remains forbidden.
 
 | Method | Path | Result |
 | --- | --- | --- |
-| `POST` | `/api/v1/queue/snapshot` | Take and return one bounded queued-work snapshot |
+| `POST` | `/api/v1/queue/snapshot` | Take and return one bounded claimable-work snapshot |
 | `POST` | `/api/v1/fleets` | Take one fresh snapshot and launch one bounded batch |
 | `POST` | `/api/v1/workers/{id}/observe` | Correlate one retained worker with its Snowcat attempt |
 
@@ -72,9 +72,11 @@ Snapshot request:
 {"repository":"frostyard/firn"}
 ```
 
-The node makes exactly one Snowcat `list_work` call with `status: "queued"`,
-the exact repository, and `limit: 100`. The response is request-only and has
-this shape:
+The node makes exactly two Snowcat `list_work` calls with the exact repository
+and `limit: 100`: one with `status: "queued"` and one with
+`status: "claimed"`. It includes every queued item and only claimed items whose
+newest attempt has outcome `expired`. It MUST NOT derive expiry from the node's
+clock. The response is request-only and has this shape:
 
 ```json
 {
@@ -104,8 +106,9 @@ this shape:
 }
 ```
 
-`truncated` MUST be true when Snowcat returns exactly 100 items. `counts` are
-launch-eligible counts: assigned items with `contract: ready`, plus all
+`truncated` MUST be true when either source call returns exactly 100 items, so
+one response contains at most 200 items. `counts` are launch-eligible counts:
+assigned items with `contract: ready`, plus all
 unassigned items under `unassigned`. Suspicious or unknown assigned contracts
 remain visible in `items`, increment `flagged`, and MUST NOT add launch capacity.
 
