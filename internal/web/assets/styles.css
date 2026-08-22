@@ -128,7 +128,13 @@ code { color: #8ddbf8; font: 10px var(--font-mono); }
 .ph-repositories .ph-queue-form { align-items: flex-end; }
 .ph-repositories .ph-queue-form label { min-width: 0; flex: 1; }
 .ph-repository-table-wrap { max-height: 210px; margin-top: 10px; border: 1px solid var(--line); }
+.ph-repository-table-wrap .ph-table { table-layout: fixed; }
+.ph-repository-table-wrap .ph-table th:nth-child(1) { width: 43%; }
+.ph-repository-table-wrap .ph-table th:nth-child(2) { width: 23%; }
+.ph-repository-table-wrap .ph-table th:nth-child(3) { width: 17%; }
+.ph-repository-table-wrap .ph-table th:nth-child(4) { width: 17%; }
 .ph-repository-table-wrap .ph-table th, .ph-repository-table-wrap .ph-table td { padding: 7px 9px; }
+.ph-repository-table-wrap .ph-name small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ph-campaign-detail { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 0 -18px; border-top: 1px solid var(--line); }
 .ph-campaign-detail:empty { display: none; }
 .ph-campaign-detail > div { min-height: 58px; padding: 10px 14px; border-right: 1px solid var(--line); }
