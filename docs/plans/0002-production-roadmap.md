@@ -277,6 +277,16 @@ The same trial proved the base-freshness interaction against Clix: checked-out
 displayed both counts and immutable commit `cfecce1e05cd`, required confirmation,
 and cancellation allocated no worker.
 
+The admitted Clix `implementation` then became Claude attempt 4284. Claude made
+clean local commit `b5752b1` but renamed the Cockpit branch and exited zero while
+asking the operator to approve `git push`; it opened no pull request and emitted
+no completion event, leaving the lease active. This proved that bypassing the
+provider's tool-permission UI does not itself communicate delivery authority to
+the model. The managed implementer prompt now preserves the preallocated branch
+and explicitly translates Snowcat's `open-pr` plus pull-request artifact
+contract into authorization to commit, push that branch, and open the draft
+pull request without another approval.
+
 ## Later / ideas
 
 - Desired concurrency and explicit automatic refill.

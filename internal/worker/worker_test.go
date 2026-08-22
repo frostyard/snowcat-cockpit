@@ -766,7 +766,7 @@ func TestBuildPromptPinsRoleSelections(t *testing.T) {
 		}
 	}
 	implementer := BuildPrompt("worker-1234567890abcdef", "implementer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "excluding kinds ending in -discovery", "exact pr-review", "exact release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix", "requiredArtifact pull-request", "release the item immediately", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "excluding kinds ending in -discovery", "exact pr-review", "exact release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix", "do not create, rename, or switch branches", "requiredArtifact pull-request", "explicit operator authorization", "push the current branch", "without asking for further permission", "at most one"} {
 		if !strings.Contains(implementer, expected) {
 			t.Fatalf("implementer prompt missing %q: %s", expected, implementer)
 		}

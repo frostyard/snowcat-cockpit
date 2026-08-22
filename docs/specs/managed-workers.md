@@ -86,7 +86,11 @@ HTTP operations:
    deliverable pull-request artifact and never widens the item's authority.
    Its claim set is the exact observed queued kinds after excluding discovery,
    review, and human-operated `release-needed` work; it MUST NOT use a closed
-   implementation-kind whitelist.
+   implementation-kind whitelist. The worker MUST keep the preallocated current
+   branch. When `open-pr` and `requiredArtifact: pull-request` are both present,
+   Cockpit's prompt MUST state that the operator has authorized committing,
+   pushing that branch, and opening the required draft pull request without a
+   second permission prompt.
 4. Each worker MUST use the dedicated tmux topology from
    [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md) with
    `remain-on-exit` enabled before the provider starts.
