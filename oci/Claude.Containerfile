@@ -39,6 +39,7 @@ RUN apt-get update \
 
 COPY --from=claude /usr/local/bin/claude /usr/local/bin/claude
 COPY --chmod=0644 oci/claude-mcp.json /usr/local/share/snowcat-cockpit/claude-mcp.json
+COPY --chmod=0644 oci/claude-system-prompt.txt /usr/local/share/snowcat-cockpit/claude-system-prompt.txt
 COPY --chmod=0755 oci/claude-entrypoint.sh /usr/local/bin/cockpit-entrypoint
 
 ENV HOME=/home/cockpit \

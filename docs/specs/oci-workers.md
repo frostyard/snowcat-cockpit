@@ -104,9 +104,13 @@ bounded writable home tmpfs rather than the read-only image filesystem.
    model. Copilot uses non-interactive `--prompt`, `--allow-all`, disabled
    remote control, built-in MCP servers, logs and updates, plus model selector
    `auto`. Claude uses print mode, no session persistence, bypass permissions,
-   no browser integration, its role-pinned model alias, and only the image-owned
-   strict Snowcat MCP configuration. These unattended permission modes are
-   permitted only inside the complete OCI boundary above.
+   no browser integration, its role-pinned model alias, only user setting
+   sources, and only the image-owned strict Snowcat MCP configuration. Its
+   entrypoint copies the three byte-locked Cockpit Snowcat skills into the
+   ephemeral user skill root and supplies an image-owned instruction to read
+   repository `AGENTS.md` and `CLAUDE.md`; repository Claude settings, hooks,
+   plugins, and local overrides are not loaded. These unattended permission
+   modes are permitted only inside the complete OCI boundary above.
 7. The foreground Podman process runs in the worker's dedicated tmux pane with
    `remain-on-exit`. Cockpit MUST NOT call `podman logs` or persist provider
    output. A normal one-shot exit reconciles to the existing `exited` process
@@ -134,7 +138,7 @@ bounded writable home tmpfs rather than the read-only image filesystem.
 | --- | --- |
 | Container name | `cockpit-<worker-id>` |
 | Codex OCI image | [`oci/Containerfile`](../../oci/Containerfile) and [`oci/entrypoint.sh`](../../oci/entrypoint.sh) |
-| Claude OCI image | [`oci/Claude.Containerfile`](../../oci/Claude.Containerfile), [`oci/claude-entrypoint.sh`](../../oci/claude-entrypoint.sh), and [`oci/claude-mcp.json`](../../oci/claude-mcp.json) |
+| Claude OCI image | [`oci/Claude.Containerfile`](../../oci/Claude.Containerfile), [`oci/claude-entrypoint.sh`](../../oci/claude-entrypoint.sh), [`oci/claude-mcp.json`](../../oci/claude-mcp.json), and [`oci/claude-system-prompt.txt`](../../oci/claude-system-prompt.txt) |
 | Copilot OCI image | [`oci/Copilot.Containerfile`](../../oci/Copilot.Containerfile) and [`oci/copilot-entrypoint.sh`](../../oci/copilot-entrypoint.sh) |
 | Worker record adapter | Exact normalized request adapter |
 | Podman credential projection | Fixed provider/GitHub paths and the exact environment-variable names above |

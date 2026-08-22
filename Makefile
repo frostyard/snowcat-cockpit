@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 GO ?= go
 GOCACHE ?= /tmp/snowcat-cockpit-gocache
 
-.PHONY: build ci fmt-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-go test-observer-wrapper test-spike vet
+.PHONY: build ci fmt-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-go test-oci-entrypoints test-observer-wrapper test-spike vet
 
 ci: fmt-check vet test
 
@@ -12,7 +12,7 @@ fmt-check:
 vet:
 	GOCACHE=$(GOCACHE) $(GO) vet ./...
 
-test: test-go test-observer-wrapper test-spike
+test: test-go test-observer-wrapper test-oci-entrypoints test-spike
 
 test-go:
 	GOCACHE=$(GOCACHE) $(GO) test ./...
@@ -20,6 +20,10 @@ test-go:
 test-observer-wrapper:
 	bash -n bin/snowcat-cockpit-serve oci/entrypoint.sh oci/claude-entrypoint.sh oci/copilot-entrypoint.sh test/observer-wrapper.test.sh
 	./test/observer-wrapper.test.sh
+
+test-oci-entrypoints:
+	bash -n test/oci-entrypoints.test.sh
+	./test/oci-entrypoints.test.sh
 
 test-spike:
 	bash -n bin/snowcat-cockpit test/cockpit.test.sh
