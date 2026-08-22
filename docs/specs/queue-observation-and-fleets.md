@@ -161,10 +161,14 @@ Classification is deterministic and case-sensitive:
 | Work kind | Role |
 | --- | --- |
 | suffix `-discovery` | `discoverer` |
-| suffix `-fix` | `implementer` |
-| exact `pr-cure` or `pr-cure-change` | `implementer` |
 | exact `pr-review` | `reviewer` |
-| every other kind | `unassigned` |
+| exact `release-needed` | `unassigned` (human-operated) |
+| every other kind | `implementer` |
+
+The implementer rule is exclusion-based because Snowcat work kinds are open:
+`implementation`, `issue-resolution`, `pr-review-fix`, cures, fixes, and future
+worker kinds remain eligible. Cockpit does not turn the human-operated
+`release-needed` preparation item into fleet capacity.
 
 A contract is suspicious when `requiredArtifact: pull-request` lacks
 `open-pr`, or when `write` authority does not carry both `open-pr` and

@@ -348,12 +348,12 @@ func Classify(kind string) Role {
 	switch {
 	case strings.HasSuffix(kind, "-discovery"):
 		return RoleDiscoverer
-	case strings.HasSuffix(kind, "-fix"), kind == "pr-cure", kind == "pr-cure-change":
-		return RoleImplementer
 	case kind == "pr-review":
 		return RoleReviewer
-	default:
+	case kind == "release-needed":
 		return RoleUnassigned
+	default:
+		return RoleImplementer
 	}
 }
 

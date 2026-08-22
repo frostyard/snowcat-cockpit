@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -23,6 +24,9 @@ type fakeRunner struct {
 	workspace  string
 	baseCommit string
 	remoteURL  string
+	upstream   string
+	ahead      int
+	behind     int
 }
 
 type loggingRunner struct {
@@ -146,6 +150,13 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 		return []byte(runner.source + "\n"), nil
 	case strings.Contains(arguments, "rev-parse\x00--verify"):
 		return []byte(runner.baseCommit + "\n"), nil
+	case strings.Contains(arguments, "rev-parse\x00--abbrev-ref\x00--symbolic-full-name"):
+		if runner.upstream == "" {
+			return nil, errors.New("no upstream")
+		}
+		return []byte(runner.upstream + "\n"), nil
+	case strings.Contains(arguments, "rev-list\x00--left-right\x00--count"):
+		return []byte(fmt.Sprintf("%d\t%d\n", runner.ahead, runner.behind)), nil
 	case strings.Contains(arguments, "remote\x00get-url\x00--push\x00origin"):
 		if runner.remoteURL == "" {
 			return nil, errors.New("missing origin")
@@ -503,6 +514,95 @@ func TestCopilotOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 	}
 }
 
+func TestClaudeOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claudeHome := filepath.Join(root, "claude")
+	ghConfig := filepath.Join(root, "gh")
+	for _, path := range []string{
+		filepath.Join(claudeHome, ".credentials.json"),
+		filepath.Join(ghConfig, "hosts.yml"), filepath.Join(ghConfig, "config.yml"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture must never be read"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("1", 40), remoteURL: "git@github.com:frostyard/firn.git"}
+	image := "sha256:" + strings.Repeat("b", 64)
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-claude-oci-test",
+		Runner: runner, Ready: func(string) error { return nil },
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:   bytes.NewReader([]byte("claude!!")),
+		Environment: func() []string {
+			return []string{
+				"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000",
+				"SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp",
+				"GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=filtered",
+			}
+		},
+		OCI: OCIConfig{
+			Images: map[string]string{"claude": image}, ClaudeHome: claudeHome, GHConfigDir: ghConfig,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Adapter: AdapterOCI, Provider: "claude", Role: "reviewer", Repository: "frostyard/firn", Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Provider != "claude" || record.Model != OCIModelOpus || record.Status != StatusRunning {
+		t.Fatalf("record = %#v", record)
+	}
+	launch := runner.commands[len(runner.commands)-1]
+	argv := strings.Join(launch.Arguments, "\n")
+	for _, required := range []string{
+		image, OCIModelOpus, claudeHome, "/run/cockpit/input/claude/.credentials.json",
+		"SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "GH_TOKEN",
+	} {
+		if !strings.Contains(argv, required) {
+			t.Errorf("Claude Podman launch is missing %q: %s", required, argv)
+		}
+	}
+	for _, forbidden := range []string{
+		"/run/cockpit/input/codex", "/run/cockpit/input/copilot",
+		"never-in-argv", "https://snowcat.invalid/mcp", "github-never-in-argv", "SECRET_SENTINEL",
+	} {
+		if strings.Contains(argv, forbidden) {
+			t.Errorf("Claude Podman launch contains forbidden %q: %s", forbidden, argv)
+		}
+	}
+	joinedEnvironment := strings.Join(launch.Env, "\n")
+	for _, required := range []string{
+		"SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "GH_TOKEN=github-never-in-argv",
+	} {
+		if !strings.Contains(joinedEnvironment, required) {
+			t.Errorf("Claude Podman environment is missing %q: %s", required, joinedEnvironment)
+		}
+	}
+	if strings.Contains(joinedEnvironment, "SECRET_SENTINEL") {
+		t.Fatalf("Claude Podman environment contains unrelated data: %s", joinedEnvironment)
+	}
+	stored, err := os.ReadFile(manager.recordPath(record.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stored, []byte("never-in-argv")) || bytes.Contains(stored, []byte("fixture must never be read")) {
+		t.Fatal("Claude OCI worker record contains credential material")
+	}
+}
+
 func TestOCIPrivateInputsRejectLoosePermissionsAndSymlinks(t *testing.T) {
 	t.Parallel()
 
@@ -524,6 +624,38 @@ func TestOCIPrivateInputsRejectLoosePermissionsAndSymlinks(t *testing.T) {
 	}
 	if err := validatePrivateInput(link); err == nil {
 		t.Fatal("symlinked OCI input was accepted")
+	}
+}
+
+func TestInspectBaseReportsLocalUpstreamRelationWithoutFetching(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{
+		source: source, baseCommit: strings.Repeat("2", 40), upstream: "origin/main", ahead: 1, behind: 3,
+	}
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-base-test", Runner: runner,
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := manager.InspectBase(context.Background(), source, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Status != "diverged" || inspection.Ahead != 1 || inspection.Behind != 3 || inspection.Upstream != "origin/main" {
+		t.Fatalf("inspection = %#v", inspection)
+	}
+	for _, command := range runner.commands {
+		if slices.Contains(command.Arguments, "fetch") || slices.Contains(command.Arguments, "pull") {
+			t.Fatalf("base inspection mutated remote refs: %#v", command.Arguments)
+		}
 	}
 }
 
@@ -634,7 +766,7 @@ func TestBuildPromptPinsRoleSelections(t *testing.T) {
 		}
 	}
 	implementer := BuildPrompt("worker-1234567890abcdef", "implementer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "-fix", "pr-cure", "require open-pr", "release the item immediately", "pull-request", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "excluding kinds ending in -discovery", "exact pr-review", "exact release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix", "requiredArtifact pull-request", "release the item immediately", "at most one"} {
 		if !strings.Contains(implementer, expected) {
 			t.Fatalf("implementer prompt missing %q: %s", expected, implementer)
 		}

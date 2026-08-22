@@ -48,6 +48,7 @@ type Config struct {
 type WorkerManager interface {
 	List(context.Context) ([]worker.Record, error)
 	Get(context.Context, string) (worker.Record, error)
+	InspectBase(context.Context, string, string) (worker.BaseInspection, error)
 	Launch(context.Context, worker.LaunchRequest) (worker.Record, error)
 	Stop(context.Context, string) (worker.Record, error)
 	Cleanup(context.Context, string) (worker.Record, error)
@@ -95,6 +96,25 @@ func New(config Config) http.Handler {
 			return
 		}
 		writeJSON(response, http.StatusOK, records)
+	})
+	mux.HandleFunc("POST /api/v1/workers/base", func(response http.ResponseWriter, request *http.Request) {
+		if config.Workers == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "managed workers are unavailable"})
+			return
+		}
+		var input struct {
+			Source  string `json:"source"`
+			BaseRef string `json:"baseRef"`
+		}
+		if !decodeJSON(response, request, &input) {
+			return
+		}
+		inspection, err := config.Workers.InspectBase(request.Context(), input.Source, input.BaseRef)
+		if err != nil {
+			writeWorkerError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusOK, inspection)
 	})
 	mux.HandleFunc("POST /api/v1/queue/snapshot", func(response http.ResponseWriter, request *http.Request) {
 		if config.Queue == nil {

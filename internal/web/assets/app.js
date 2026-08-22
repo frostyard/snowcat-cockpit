@@ -377,7 +377,7 @@ function populateProviders(prefix) {
   const provider = byId(`${prefix}-provider`);
   provider.replaceChildren();
   const adapter = byId(`${prefix}-adapter`).value;
-  const candidates = adapter === "oci" ? readyProviders.filter((candidate) => ["codex", "copilot"].includes(candidate.id)) : readyProviders;
+  const candidates = adapter === "oci" ? readyProviders.filter((candidate) => ["codex", "claude", "copilot"].includes(candidate.id)) : readyProviders;
   for (const candidate of candidates) {
     const option = document.createElement("option");
     option.value = candidate.id;
@@ -412,6 +412,7 @@ async function submitFleet(event) {
   submit.disabled = true;
   byId("fleet-message").textContent = "Observing once, then allocating the bounded batch…";
   try {
+    if (!(await confirmBase("fleet"))) return;
     const result = await requestJSON("/api/v1/fleets", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -448,6 +449,7 @@ async function submitLaunch(event) {
   submit.disabled = true;
   byId("launch-message").textContent = "Allocating worktree and retained terminal…";
   try {
+    if (!(await confirmBase("launch"))) return;
     const record = await requestJSON("/api/v1/workers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -469,6 +471,21 @@ async function submitLaunch(event) {
   } finally {
     submit.disabled = false;
   }
+}
+
+async function confirmBase(prefix) {
+  const inspection = await requestJSON("/api/v1/workers/base", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: byId(`${prefix}-source`).value.trim(),
+      baseRef: byId(`${prefix}-base-ref`).value.trim(),
+    }),
+  });
+  const shortCommit = inspection.baseCommit.slice(0, 12);
+  byId(`${prefix}-message`).textContent = `${inspection.detail} · selected ${shortCommit}`;
+  if (!["behind", "diverged"].includes(inspection.status)) return true;
+  return window.confirm(`${inspection.detail}\n\nLaunch from ${shortCommit} anyway?`);
 }
 
 function renderChecks(result) {

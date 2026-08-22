@@ -39,7 +39,9 @@ func TestHTTPObserverTakesOneBoundedSnapshot(t *testing.T) {
 					{"id":"1","repository":"frostyard/firn","kind":"quality-gap-discovery","priority":4,"status":"queued","allowedActions":["read","create-followup"],"requiredArtifact":"none"},
 					{"id":"2","repository":"frostyard/firn","kind":"ci-signal-fix","priority":3,"status":"queued","allowedActions":["read","write","run-tests","open-pr"],"requiredArtifact":"pull-request"},
 					{"id":"3","repository":"frostyard/firn","kind":"pr-review","priority":2,"status":"queued","allowedActions":["read","run-tests"],"requiredArtifact":"none"},
-					{"id":"4","repository":"frostyard/firn","kind":"release-needed","priority":1,"status":"queued","allowedActions":["read"],"requiredArtifact":"none"}
+					{"id":"4","repository":"frostyard/firn","kind":"implementation","priority":1,"status":"queued","allowedActions":["read","write","run-tests","open-pr"],"requiredArtifact":"pull-request"},
+					{"id":"5","repository":"frostyard/firn","kind":"release-needed","priority":0,"status":"queued","allowedActions":["read","write","open-pr"],"requiredArtifact":"none"},
+					{"id":"6","repository":"frostyard/firn","kind":"future-change","priority":0,"status":"queued","allowedActions":["read","write"],"requiredArtifact":"none"}
 				]`}},
 			},
 		})
@@ -66,10 +68,10 @@ func TestHTTPObserverTakesOneBoundedSnapshot(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("HTTP calls = %d, want 1", calls.Load())
 	}
-	if snapshot.ObservedAt != now || snapshot.Truncated || len(snapshot.Items) != 4 {
+	if snapshot.ObservedAt != now || snapshot.Truncated || len(snapshot.Items) != 6 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
-	if snapshot.Counts[RoleDiscoverer] != 1 || snapshot.Counts[RoleImplementer] != 1 || snapshot.Counts[RoleReviewer] != 1 || snapshot.Counts[RoleUnassigned] != 1 {
+	if snapshot.Counts[RoleDiscoverer] != 1 || snapshot.Counts[RoleImplementer] != 2 || snapshot.Counts[RoleReviewer] != 1 || snapshot.Counts[RoleUnassigned] != 1 || snapshot.Flagged != 1 {
 		t.Fatalf("counts = %#v", snapshot.Counts)
 	}
 	if snapshot.Items[1].RequiredArtifact != "pull-request" || snapshot.Items[1].Role != RoleImplementer || snapshot.Items[1].Contract != "ready" {
@@ -208,11 +210,14 @@ func TestClassify(t *testing.T) {
 	tests := map[string]Role{
 		"docs-drift-discovery": RoleDiscoverer,
 		"quality-gap-fix":      RoleImplementer,
+		"implementation":       RoleImplementer,
 		"pr-review-fix":        RoleImplementer,
 		"pr-cure":              RoleImplementer,
 		"pr-cure-change":       RoleImplementer,
 		"pr-review":            RoleReviewer,
-		"issue-resolution":     RoleUnassigned,
+		"release-needed":       RoleUnassigned,
+		"issue-resolution":     RoleImplementer,
+		"future-work-kind":     RoleImplementer,
 	}
 	for kind, want := range tests {
 		if got := Classify(kind); got != want {

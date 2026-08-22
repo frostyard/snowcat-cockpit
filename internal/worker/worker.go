@@ -32,6 +32,8 @@ const (
 	OCIModelWork   = "gpt-5.6-sol"
 	OCIModelReview = "gpt-5.6-terra"
 	OCIModelAuto   = "auto"
+	OCIModelSonnet = "sonnet"
+	OCIModelOpus   = "opus"
 
 	StatusAllocating = "allocating"
 	StatusRunning    = "running"
@@ -88,6 +90,17 @@ type Record struct {
 	CleanedAt  *time.Time `json:"cleanedAt,omitempty"`
 }
 
+type BaseInspection struct {
+	Source     string `json:"source"`
+	BaseRef    string `json:"baseRef"`
+	BaseCommit string `json:"baseCommit"`
+	Upstream   string `json:"upstream,omitempty"`
+	Status     string `json:"status"`
+	Ahead      int    `json:"ahead"`
+	Behind     int    `json:"behind"`
+	Detail     string `json:"detail"`
+}
+
 type Console struct {
 	URL string `json:"url"`
 }
@@ -139,6 +152,7 @@ type Config struct {
 type OCIConfig struct {
 	Images      map[string]string
 	CodexHome   string
+	ClaudeHome  string
 	CopilotHome string
 	GHConfigDir string
 }
@@ -237,26 +251,13 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 		}
 	}
 
-	source, err := canonicalDirectory(request.Source)
+	base, err := manager.inspectBase(ctx, gitPath, request.Source, request.BaseRef)
 	if err != nil {
-		return Record{}, fmt.Errorf("%w: source: %v", ErrInvalid, err)
+		return Record{}, err
 	}
-	output, err := manager.run(ctx, gitPath, source, nil, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return Record{}, fmt.Errorf("%w: source is not a Git working tree", ErrInvalid)
-	}
-	source, err = canonicalDirectory(strings.TrimSpace(string(output)))
-	if err != nil {
-		return Record{}, fmt.Errorf("%w: resolve Git source: %v", ErrInvalid, err)
-	}
-	output, err = manager.run(ctx, gitPath, source, nil, "rev-parse", "--verify", request.BaseRef+"^{commit}")
-	if err != nil {
-		return Record{}, fmt.Errorf("%w: base ref does not resolve to a local commit", ErrInvalid)
-	}
-	baseCommit := strings.TrimSpace(string(output))
-	if !commitRE.MatchString(baseCommit) {
-		return Record{}, fmt.Errorf("%w: Git returned an invalid base commit", ErrInvalid)
-	}
+	source := base.Source
+	baseCommit := base.BaseCommit
+	var output []byte
 	var remoteURL string
 	if request.Adapter == AdapterOCI {
 		output, err = manager.run(ctx, gitPath, source, nil, "remote", "get-url", "--push", "origin")
@@ -343,6 +344,80 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 		return record, err
 	}
 	return record, nil
+}
+
+func (manager *Manager) InspectBase(ctx context.Context, source, baseRef string) (BaseInspection, error) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+
+	if err := validateBaseInput(source, baseRef); err != nil {
+		return BaseInspection{}, err
+	}
+	gitPath, err := manager.lookPath("git")
+	if err != nil {
+		return BaseInspection{}, fmt.Errorf("%w: git is not available", ErrNotReady)
+	}
+	return manager.inspectBase(ctx, gitPath, source, baseRef)
+}
+
+func validateBaseInput(source, baseRef string) error {
+	if source == "" || baseRef == "" || len(baseRef) > 160 || strings.HasPrefix(baseRef, "-") || strings.ContainsAny(baseRef, "\x00\n\r") {
+		return fmt.Errorf("%w: source and a safe local base ref are required", ErrInvalid)
+	}
+	return nil
+}
+
+func (manager *Manager) inspectBase(ctx context.Context, gitPath, source, baseRef string) (BaseInspection, error) {
+	inspection := BaseInspection{BaseRef: baseRef, Status: "untracked"}
+	resolved, err := canonicalDirectory(source)
+	if err != nil {
+		return BaseInspection{}, fmt.Errorf("%w: source: %v", ErrInvalid, err)
+	}
+	output, err := manager.run(ctx, gitPath, resolved, nil, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return BaseInspection{}, fmt.Errorf("%w: source is not a Git working tree", ErrInvalid)
+	}
+	resolved, err = canonicalDirectory(strings.TrimSpace(string(output)))
+	if err != nil {
+		return BaseInspection{}, fmt.Errorf("%w: resolve Git source: %v", ErrInvalid, err)
+	}
+	inspection.Source = resolved
+	output, err = manager.run(ctx, gitPath, resolved, nil, "rev-parse", "--verify", baseRef+"^{commit}")
+	if err != nil {
+		return BaseInspection{}, fmt.Errorf("%w: base ref does not resolve to a local commit", ErrInvalid)
+	}
+	inspection.BaseCommit = strings.TrimSpace(string(output))
+	if !commitRE.MatchString(inspection.BaseCommit) {
+		return BaseInspection{}, fmt.Errorf("%w: Git returned an invalid base commit", ErrInvalid)
+	}
+	output, err = manager.run(ctx, gitPath, resolved, nil, "rev-parse", "--abbrev-ref", "--symbolic-full-name", baseRef+"@{upstream}")
+	if err != nil {
+		inspection.Detail = fmt.Sprintf("%s resolves locally to %.12s; no local upstream relation is configured", baseRef, inspection.BaseCommit)
+		return inspection, nil
+	}
+	inspection.Upstream = strings.TrimSpace(string(output))
+	if inspection.Upstream == "" || strings.ContainsAny(inspection.Upstream, "\x00\n\r") {
+		return BaseInspection{}, fmt.Errorf("%w: Git returned an invalid upstream ref", ErrInvalid)
+	}
+	output, err = manager.run(ctx, gitPath, resolved, nil, "rev-list", "--left-right", "--count", baseRef+"..."+inspection.Upstream)
+	if err != nil {
+		return BaseInspection{}, fmt.Errorf("%w: inspect local base relation", ErrInvalid)
+	}
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%d %d", &inspection.Ahead, &inspection.Behind); err != nil || inspection.Ahead < 0 || inspection.Behind < 0 {
+		return BaseInspection{}, fmt.Errorf("%w: Git returned invalid ahead/behind counts", ErrInvalid)
+	}
+	switch {
+	case inspection.Ahead > 0 && inspection.Behind > 0:
+		inspection.Status = "diverged"
+	case inspection.Behind > 0:
+		inspection.Status = "behind"
+	case inspection.Ahead > 0:
+		inspection.Status = "ahead"
+	default:
+		inspection.Status = "current"
+	}
+	inspection.Detail = fmt.Sprintf("%s is %d ahead and %d behind local upstream %s; Cockpit did not fetch", baseRef, inspection.Ahead, inspection.Behind, inspection.Upstream)
+	return inspection, nil
 }
 
 func (manager *Manager) List(ctx context.Context) ([]Record, error) {
@@ -609,7 +684,7 @@ func BuildPrompt(workerID, role, repository string) string {
 	if role == "reviewer" {
 		return fmt.Sprintf("Use the review-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only pr-review items for repository %s. Claim at most one item, report its structured verdict to Snowcat, then stop.", workerID, repository)
 	}
-	return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only kinds ending in -fix, plus exact pr-cure and pr-cure-change items, for repository %s. Claim at most one item. Before substantive work on any change item, require open-pr in allowedActions; if it is absent, release the item immediately as undeliverable and stop. Otherwise complete it within its allowed actions, deliver the required commit and pull-request artifacts, report the result to Snowcat, then stop.", workerID, repository)
+	return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. For repository %s, list queued work once, derive the exact observed kind set excluding kinds ending in -discovery, exact pr-review, and exact release-needed, and claim at most one item with only that set. Do not use a fixed implementation-kind whitelist; implementation, issue-resolution, pr-review-fix, cures, fixes, and future worker kinds are eligible. release-needed remains human-operated. Before substantive work on any change item, require both open-pr in allowedActions and requiredArtifact pull-request; if either is absent, release the item immediately as undeliverable and stop. Otherwise complete it within its allowed actions, deliver the required commit and pull-request artifacts, report the result to Snowcat, then stop.", workerID, repository)
 }
 
 func validateRequest(request *LaunchRequest) error {
@@ -631,15 +706,12 @@ func validateRequest(request *LaunchRequest) error {
 	if !repositoryRE.MatchString(request.Repository) {
 		return fmt.Errorf("%w: repository must be owner/name", ErrInvalid)
 	}
-	if request.Source == "" || len(request.BaseRef) > 160 || strings.HasPrefix(request.BaseRef, "-") || strings.ContainsAny(request.BaseRef, "\x00\n\r") {
-		return fmt.Errorf("%w: source and a safe local base ref are required", ErrInvalid)
-	}
-	return nil
+	return validateBaseInput(request.Source, request.BaseRef)
 }
 
 func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) (string, error) {
-	if request.Provider != "codex" && request.Provider != "copilot" {
-		return "", fmt.Errorf("%w: OCI supports only codex and copilot", ErrNotReady)
+	if request.Provider != "codex" && request.Provider != "claude" && request.Provider != "copilot" {
+		return "", fmt.Errorf("%w: OCI supports only codex, claude, and copilot", ErrNotReady)
 	}
 	if runtime.GOOS != "linux" {
 		return "", fmt.Errorf("%w: the rootless Podman adapter requires Linux", ErrNotReady)
@@ -669,8 +741,10 @@ func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) 
 			filepath.Join(manager.oci.CodexHome, "auth.json"),
 			filepath.Join(manager.oci.CodexHome, "config.toml"),
 		)
-	} else {
+	} else if request.Provider == "copilot" {
 		inputs = append(inputs, filepath.Join(manager.oci.CopilotHome, "mcp-config.json"))
+	} else {
+		inputs = append(inputs, filepath.Join(manager.oci.ClaudeHome, ".credentials.json"))
 	}
 	for _, input := range inputs {
 		if err := validatePrivateInput(input); err != nil {
@@ -682,6 +756,9 @@ func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) 
 	}
 	if !hasNonemptyEnvironment(manager.environment(), "GH_TOKEN") {
 		return "", fmt.Errorf("%w: GH_TOKEN is not present in the node environment", ErrNotReady)
+	}
+	if request.Provider == "claude" && !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_URL") {
+		return "", fmt.Errorf("%w: SNOWCAT_MCP_URL is not present in the node environment", ErrNotReady)
 	}
 	return podmanPath, nil
 }
@@ -758,7 +835,7 @@ func ociHostEnvironment(environment []string) []string {
 		"XDG_RUNTIME_DIR": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 		"XDG_CACHE_HOME": true, "DBUS_SESSION_BUS_ADDRESS": true,
 		"CONTAINER_HOST": true, "TMPDIR": true,
-		"SNOWCAT_MCP_TOKEN": true, "GH_TOKEN": true,
+		"SNOWCAT_MCP_TOKEN": true, "SNOWCAT_MCP_URL": true, "GH_TOKEN": true,
 	}
 	result := make([]string, 0, len(allowed))
 	for _, entry := range environment {
@@ -793,21 +870,34 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 			"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "auth.json"), "/run/cockpit/input/codex/auth.json"),
 			"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "config.toml"), "/run/cockpit/input/codex/config.toml"),
 		)
-	} else {
+	} else if record.Provider == "copilot" {
 		arguments = append(arguments,
 			"--mount", inputMount(filepath.Join(manager.oci.CopilotHome, "mcp-config.json"), "/run/cockpit/input/copilot/mcp-config.json"),
 		)
+	} else {
+		arguments = append(arguments,
+			"--mount", inputMount(filepath.Join(manager.oci.ClaudeHome, ".credentials.json"), "/run/cockpit/input/claude/.credentials.json"),
+		)
 	}
-	return append(arguments,
+	arguments = append(arguments,
 		"--env", "SNOWCAT_MCP_TOKEN",
 		"--env", "GH_TOKEN",
-		manager.oci.Images[record.Provider], prompt, record.Model,
 	)
+	if record.Provider == "claude" {
+		arguments = append(arguments, "--env", "SNOWCAT_MCP_URL")
+	}
+	return append(arguments, manager.oci.Images[record.Provider], prompt, record.Model)
 }
 
 func ociModel(provider, role string) string {
 	if provider == "copilot" {
 		return OCIModelAuto
+	}
+	if provider == "claude" {
+		if role == "reviewer" {
+			return OCIModelOpus
+		}
+		return OCIModelSonnet
 	}
 	if role == "reviewer" {
 		return OCIModelReview

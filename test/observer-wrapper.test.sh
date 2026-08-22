@@ -58,13 +58,14 @@ cat >"$FAKE_COCKPIT" <<'EOF'
 set -euo pipefail
 [[ "$1" == "serve" ]]
 [[ "$GH_TOKEN" == "github-token-fixture" ]]
+[[ "$SNOWCAT_MCP_URL" == "https://snowcat.goat-snake.ts.net/mcp" ]]
 printf 'OCI wrapper fixture passed\n'
 EOF
 chmod 0700 "$FAKE_COCKPIT"
 
 output="$(
   PATH="$FAKE_BIN:$PATH" \
-    SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE="sha256:fixture" \
+    SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE="sha256:fixture" \
     SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" \
     SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
     "$WRAPPER"

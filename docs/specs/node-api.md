@@ -55,6 +55,7 @@ The text form contains the same checks in a human-readable table.
 | `GET` | `/api/v1/doctor` | Current doctor result |
 | `GET` | `/api/v1/profiles` | Current structural worker-profile result |
 | `GET` | `/api/v1/workers` | Current managed-worker inventory |
+| `POST` | `/api/v1/workers/base` | Read-only selected base commit and local upstream relation |
 | `POST` | `/api/v1/queue/snapshot` | One bounded Snowcat queue observation |
 | `POST` | `/api/v1/fleets` | One snapshot-capped managed-worker batch |
 | `POST` | `/api/v1/workers` | Launch one managed worker |
@@ -105,6 +106,9 @@ MUST return an HTTP 404.
 12. An OCI worker launch MUST follow the [rootless OCI worker](oci-workers.md)
     contract and fail before workspace allocation when its boundary is not
     ready.
+13. Base inspection MUST resolve only local Git state, report the selected
+    immutable commit and configured local upstream relation, and MUST NOT fetch,
+    pull, or mutate the source repository.
 
 ## References
 

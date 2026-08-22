@@ -160,15 +160,15 @@ and process termination remain intentionally outside its boundary.
   in host and rootless-container modes with no credential written to Cockpit
   state or back into the host provider configuration.
 
-The first executable slice is now specified and implemented for Codex and
+The executable slice is now specified and implemented for Codex, Claude, and
 Copilot on rootless Podman. The node accepts an explicit `host` or `oci` adapter for one
 worker or a bounded fleet, validates the pinned local image and exact private
 input-file metadata before workspace allocation, and launches a one-shot Codex
 process in a read-only, non-root container with bounded tmpfs and no runtime
 socket, host network, capabilities, or container logs. The image entrypoint
 copies provider and GitHub configuration into the ephemeral home without
-Cockpit reading or persisting it. Docker, Claude, and multi-architecture
-publication remain before Phase 5 is complete.
+Cockpit reading or persisting it. Docker and multi-architecture publication
+remain before Phase 5 is complete.
 
 The first live implementation-and-review launch exposed a linked-worktree
 boundary defect before either worker claimed Snowcat work: the worktree's
@@ -248,8 +248,34 @@ terminals and self-contained workspaces.
 The trial also exposed an operator-input freshness risk: the selected clean
 Firn `main` was behind its local `origin/main` tracking ref, which was itself
 behind GitHub. Cockpit intentionally neither fetches nor chooses a remote ref;
-a later readiness slice should make the selected base commit and local
-ahead/behind state conspicuous before launch without silently mutating it.
+the dashboard now resolves and displays the selected immutable commit and its
+local ahead/behind relation before every single or fleet launch. A behind or
+diverged base requires explicit confirmation. The inspection performs no fetch
+and says so, preserving the operator's responsibility for remote freshness.
+
+The third provider slice adds a checksum-pinned Claude Code 2.1.239 image.
+It mounts only Claude's exact private OAuth credential plus the two GitHub CLI
+files. Snowcat's URL and token enter by environment-variable name and expand
+only inside an image-owned strict MCP configuration; no host Claude MCP file is
+mounted or parsed. Discoverers and implementers use `sonnet`, while reviewers
+use `opus`. An exact hardened-container acceptance run authenticated Claude,
+called Snowcat `list_work`, made no claim or repository change, and exited
+normally. Claude OCI discoverer `worker-722764f2efb292e4` then claimed Clix
+quality-gap attempt 4280 from immutable base `c9942bfa0c35`, completed it, and
+exited while its terminal and workspace remained retained.
+
+That discovery proposed a correctly authorized pull-request delivery under
+generic kind `implementation`. Admission exposed that Cockpit had incorrectly
+treated its earlier successful `*-fix` prompt as a closed Snowcat taxonomy.
+Snowcat intentionally permits open work kinds; Cockpit now assigns all
+non-discovery, non-review worker kinds to implementers while leaving exact
+`release-needed` human-operated. A provenance-rich `quality-gap-fix` would have
+been a better child name, but `implementation` is valid and remains claimable.
+
+The same trial proved the base-freshness interaction against Clix: checked-out
+`main` was 32 commits behind its refreshed local `origin/main`. The dashboard
+displayed both counts and immutable commit `cfecce1e05cd`, required confirmation,
+and cancellation allocated no worker.
 
 ## Later / ideas
 

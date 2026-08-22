@@ -21,6 +21,13 @@ type fakeWorkerManager struct {
 	launches []worker.LaunchRequest
 }
 
+func (manager *fakeWorkerManager) InspectBase(_ context.Context, source, baseRef string) (worker.BaseInspection, error) {
+	return worker.BaseInspection{
+		Source: source, BaseRef: baseRef, BaseCommit: strings.Repeat("a", 40), Upstream: "origin/main",
+		Status: "behind", Behind: 2, Detail: "main is 0 ahead and 2 behind local upstream origin/main; Cockpit did not fetch",
+	}, nil
+}
+
 func (manager *fakeWorkerManager) List(context.Context) ([]worker.Record, error) {
 	return manager.records, nil
 }
@@ -129,6 +136,23 @@ func TestRoutes(t *testing.T) {
 		}
 		if snapshot.Counts[queueview.RoleImplementer] != 2 || queue.repository != "frostyard/firn" {
 			t.Fatalf("snapshot = %#v, repository = %q", snapshot, queue.repository)
+		}
+	})
+
+	t.Run("base inspection", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/workers/base", strings.NewReader(`{"source":"/repo","baseRef":"main"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var inspection worker.BaseInspection
+		if err := json.NewDecoder(response.Body).Decode(&inspection); err != nil {
+			t.Fatal(err)
+		}
+		if inspection.Status != "behind" || inspection.Behind != 2 || inspection.Upstream != "origin/main" {
+			t.Fatalf("inspection = %#v", inspection)
 		}
 	})
 

@@ -135,10 +135,8 @@ var roles = []Role{
 		ID:          "implementer",
 		Label:       "Implementer",
 		Skill:       "work-snowcat-queue",
-		Selection:   "kinds ending in -fix, plus exact cure kinds",
-		ExactKinds:  []string{"pr-cure", "pr-cure-change"},
-		KindSuffix:  "-fix",
-		Description: "Claims one bounded implementation or cure item and delivers only within its authority.",
+		Selection:   "all queued kinds except *-discovery, pr-review, and human release-needed",
+		Description: "Claims one bounded worker delivery item and delivers only within its authority.",
 	},
 	{
 		ID:          "reviewer",

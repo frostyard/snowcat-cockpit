@@ -60,6 +60,7 @@ HTTP operations:
 | Method | Path | Result |
 | --- | --- | --- |
 | `GET` | `/api/v1/workers` | Current records reconciled with tmux |
+| `POST` | `/api/v1/workers/base` | Resolve the selected commit and compare it with its configured local upstream |
 | `POST` | `/api/v1/workers` | Launch one worker from a JSON request |
 | `POST` | `/api/v1/workers/{id}/observe` | Take one exact Snowcat attempt observation |
 | `POST` | `/api/v1/workers/{id}/stop` | Stop that worker's tmux server |
@@ -81,8 +82,11 @@ HTTP operations:
    after reporting the result. A discoverer MUST remain read-only, select only
    `*-discovery`, and declare `requiredArtifact` on every proposed child. An
    implementer MUST release a claimed change item before substantive work when
-   `open-pr` is absent; the role requires a deliverable pull-request artifact
-   and never widens the item's authority.
+   `open-pr` or `requiredArtifact: pull-request` is absent; the role requires a
+   deliverable pull-request artifact and never widens the item's authority.
+   Its claim set is the exact observed queued kinds after excluding discovery,
+   review, and human-operated `release-needed` work; it MUST NOT use a closed
+   implementation-kind whitelist.
 4. Each worker MUST use the dedicated tmux topology from
    [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md) with
    `remain-on-exit` enabled before the provider starts.
@@ -117,6 +121,11 @@ HTTP operations:
     OCI role models MUST follow the rootless OCI contract; Cockpit MUST NOT
     silently claim a different-model review when the selected model matches the
     review origin.
+15. Before dashboard launch, Cockpit MUST show the selected immutable commit
+    and its ahead/behind relation to the base ref's configured local upstream.
+    A behind or diverged relation requires explicit operator confirmation.
+    Inspection MUST NOT fetch, pull, choose a different ref, or treat a local
+    tracking ref as proof of current remote state.
 
 ## Derived artifacts
 

@@ -78,11 +78,10 @@ The initial roles are:
   read-only assessment, and proposes at most one bounded child. The child must
   explicitly declare Snowcat's delivery contract; operator admission remains
   in Snowcat.
-- **Implementer:** receives exact kinds derived from the live queue under an
-  operator-selected implementation rule and uses Snowcat's canonical general
-  worker lifecycle. The default rule accepts kinds ending in `-fix` plus exact
-  `pr-cure` and `pr-cure-change`. Exact `pr-review` and discovery kinds are
-  excluded.
+- **Implementer:** derives exact kinds from the live queue and accepts every
+  worker kind except `*-discovery`, exact `pr-review`, and human-operated
+  `release-needed`. This preserves Snowcat's open kind taxonomy, including
+  `implementation`, `issue-resolution`, `pr-review-fix`, cures, and fixes.
 - **Reviewer:** receives only exact `pr-review` and uses Snowcat's canonical
   review-only lifecycle.
 
@@ -102,13 +101,13 @@ worktree, and hides only those generated skill paths from Git through
 process-local configuration. It does not fetch or infer a remote default
 branch. Its lifecycle follows the [managed-worker contract](../specs/managed-workers.md).
 
-The OCI adapter runs Codex or Copilot once per container with a non-root user,
+The OCI adapter runs Codex, Claude, or Copilot once per container with a non-root user,
 a provider-specific SHA-256-pinned local image, a self-contained local Git clone,
 and exact provider and GitHub configuration files copied from read-only mounts into tmpfs. The
 clone avoids exposing the source repository's common Git directory and copies
 objects without hardlinks or network access. It supports rootless Podman only.
-Claude and Docker fail closed before workspace allocation and remain later
-explicit compatibility slices.
+Docker fails closed before workspace allocation and remains a later explicit
+compatibility slice.
 
 The projection and unattended-permission boundary is recorded in
 [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md) and made
