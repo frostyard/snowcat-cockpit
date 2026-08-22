@@ -22,11 +22,13 @@ in [org-adrs.md](org-adrs.md).
 - [0004 — Observe Snowcat once to plan bounded fleets](adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
 - [0005 — Isolate unattended workers in rootless OCI containers](adr/0005-isolate-unattended-workers-in-rootless-oci.md)
 - [0006 — Use self-contained Git directories for OCI workers](adr/0006-use-self-contained-git-directories-for-oci-workers.md)
+- [0007 — Use canonical aliases for ACMM conformance](adr/0007-use-canonical-aliases-for-acmm-conformance.md)
 
 ### Design
 
 - [Cockpit architecture](design/overview.md)
 - [Cockpit node](design/node.md)
+- [Quality loop](design/quality-loop.md)
 
 ### Specs
 
@@ -37,6 +39,8 @@ in [org-adrs.md](org-adrs.md).
 - [Rootless OCI workers](specs/oci-workers.md)
 - [Queue observation and bounded fleets](specs/queue-observation-and-fleets.md)
 - [Worker profiles and locked skill kit](specs/worker-profiles.md)
+- [PR acceptance metric](specs/pr-acceptance-metric.md)
+- [PR review rubric](specs/pr-review-rubric.md)
 
 ### Plans
 

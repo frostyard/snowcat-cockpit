@@ -2,15 +2,30 @@ SHELL := /usr/bin/env bash
 GO ?= go
 GOCACHE ?= /tmp/snowcat-cockpit-gocache
 
-.PHONY: build ci docker-image docker-image-claude docker-image-codex docker-image-copilot fmt-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-go test-oci-entrypoints test-observer-wrapper test-spike vet
+.PHONY: build ci docs-check docker-image docker-image-claude docker-image-codex docker-image-copilot fmt-check lint lint-version-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-go test-oci-entrypoints test-observer-wrapper test-spike vet
 
-ci: fmt-check vet test
+GOLANGCI_LINT_VERSION := 2.13.1
+
+ci: fmt-check vet lint-version-check lint test docs-check
 
 fmt-check:
 	test -z "$$(gofmt -l cmd internal)"
 
 vet:
 	GOCACHE=$(GOCACHE) $(GO) vet ./...
+
+lint-version-check:
+	@installed="$$(golangci-lint version --short 2>/dev/null)" || { \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required for make ci"; exit 1; }; \
+	if [[ "$$installed" != "$(GOLANGCI_LINT_VERSION)" ]]; then \
+		echo "expected golangci-lint $(GOLANGCI_LINT_VERSION), found $$installed"; exit 1; \
+	fi
+
+lint:
+	golangci-lint run
+
+docs-check:
+	node scripts/check-docs.mjs
 
 test: test-go test-observer-wrapper test-oci-entrypoints test-spike
 
