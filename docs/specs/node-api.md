@@ -18,6 +18,10 @@ snowcat-cockpit version
 snowcat-cockpit help
 ```
 
+`version` writes one line containing the release version plus the injected
+commit, UTC build date, and builder identity. Development builds use explicit
+`none`/`unknown` placeholders rather than omitting provenance.
+
 | Input | Constraints |
 | --- | --- |
 | `listen` | TCP host and port; host MUST resolve syntactically to `127.0.0.1`, `::1`, or `localhost`; default `127.0.0.1:7682` |

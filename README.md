@@ -13,9 +13,21 @@ Start with the [architecture](docs/design/overview.md), the
 [node design](docs/design/node.md), and the
 [production roadmap](docs/plans/0002-production-roadmap.md).
 
+## Build and release
+
+`make build` writes a version-stamped Linux binary to
+`dist/snowcat-cockpit`; `make install` installs the same command through Go.
+`make ci` is the complete credential-free repository gate and is also exposed
+as `make check` for the frostyard Go-repository convention.
+
+Version tags run GoReleaser Pro for `linux/amd64` and `linux/arm64`, publish
+archives and `frostyard-snowcat-cockpit` deb/rpm/apk packages, and separately
+publish the three multi-architecture worker images. The nightly workflow
+replaces the single `dev` prerelease after the `Tests` workflow succeeds.
+
 ## Node quick start
 
-The node requires Go 1.24 or newer to build. Inspect this machine without
+The node requires Go 1.26.6 or newer to build. Inspect this machine without
 creating state or claiming work:
 
 ```bash

@@ -26,7 +26,12 @@ import (
 	"github.com/frostyard/snowcat-cockpit/internal/worker"
 )
 
-var version = "development"
+var (
+	version = "development"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "unknown"
+)
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -58,7 +63,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "version accepts no arguments")
 			return 2
 		}
-		fmt.Fprintln(stdout, version)
+		fmt.Fprintf(stdout, "%s (commit=%s date=%s builtBy=%s)\n", version, commit, date, builtBy)
 		return 0
 	case "help", "-h", "--help":
 		printUsage(stdout)

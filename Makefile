@@ -1,12 +1,26 @@
 SHELL := /usr/bin/env bash
 GO ?= go
 GOCACHE ?= /tmp/snowcat-cockpit-gocache
+GOFMT ?= gofmt
 
-.PHONY: build ci docs-check docker-image docker-image-claude docker-image-codex docker-image-copilot fmt-check lint lint-version-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-go test-oci-entrypoints test-observer-wrapper test-spike vet
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo development)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_TIME) -X main.builtBy=make"
+
+.PHONY: build build-cross bump check ci clean docs-check docker-image docker-image-claude docker-image-codex docker-image-copilot fmt fmt-check install lint lint-version-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-cover test-go test-oci-entrypoints test-observer-wrapper test-race test-spike tidy-check vet
 
 GOLANGCI_LINT_VERSION := 2.13.1
 
-ci: fmt-check vet lint-version-check lint test docs-check
+check: ci
+
+ci: tidy-check fmt-check vet lint-version-check lint test test-race build-cross docs-check
+
+tidy-check:
+	$(GO) mod tidy -diff
+
+fmt:
+	$(GOFMT) -w $$(git ls-files '*.go')
 
 fmt-check:
 	test -z "$$(gofmt -l cmd internal)"
@@ -32,6 +46,13 @@ test: test-go test-observer-wrapper test-oci-entrypoints test-spike
 test-go:
 	GOCACHE=$(GOCACHE) $(GO) test ./...
 
+test-cover:
+	GOCACHE=$(GOCACHE) $(GO) test -coverprofile=coverage.out -covermode=atomic ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+
+test-race:
+	GOCACHE=$(GOCACHE) $(GO) test -race -short ./...
+
 test-observer-wrapper:
 	bash -n bin/snowcat-cockpit-serve oci/entrypoint.sh oci/claude-entrypoint.sh oci/copilot-entrypoint.sh test/observer-wrapper.test.sh
 	./test/observer-wrapper.test.sh
@@ -46,7 +67,24 @@ test-spike:
 
 build:
 	mkdir -p dist
-	GOCACHE=$(GOCACHE) $(GO) build -trimpath -o dist/snowcat-cockpit ./cmd/snowcat-cockpit
+	GOCACHE=$(GOCACHE) $(GO) build -trimpath $(LDFLAGS) -o dist/snowcat-cockpit ./cmd/snowcat-cockpit
+
+build-cross:
+	GOOS=linux GOARCH=amd64 GOCACHE=$(GOCACHE) $(GO) build -trimpath -o /tmp/snowcat-cockpit-linux-amd64 ./cmd/snowcat-cockpit
+	GOOS=linux GOARCH=arm64 GOCACHE=$(GOCACHE) $(GO) build -trimpath -o /tmp/snowcat-cockpit-linux-arm64 ./cmd/snowcat-cockpit
+
+install:
+	$(GO) install -trimpath $(LDFLAGS) ./cmd/snowcat-cockpit
+
+clean:
+	rm -rf -- dist coverage.out coverage.html
+
+bump:
+	$(MAKE) ci
+	@if [[ -n "$$(git status --porcelain)" ]]; then echo "working tree is not clean"; exit 1; fi
+	@version="$$(svu next)"; \
+	git tag -a "$$version" -m "Version $$version"; \
+	git push origin "$$version"
 
 oci-image: oci-image-codex oci-image-claude oci-image-copilot
 
