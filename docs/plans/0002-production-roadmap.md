@@ -341,11 +341,29 @@ Docker's already-removed `--rm` container and retained the terminal and
 self-contained workspace. The tag-triggered worker-image workflow now defines
 checksum-pinned `linux/amd64` and `linux/arm64` publication to GHCR; its first
 successful tag run still remains required publication evidence. A real Docker
-delivery pair and that tag run remain before Phase 5 closes.
+delivery pair followed against Updex. Five Claude discoverers completed five
+different discovery items, after which five admitted deliveries produced four
+draft pull requests (#386–#389) and one intended human issue (#385). All four
+pull requests passed their repository checks. Four Copilot reviewers ran in
+Docker; their terminals exited while immediate bounded attempt observation was
+still unmatched, confirming that process exit and Snowcat verifier/correlation
+timing remain separate. The first GHCR tag run remains required publication
+evidence.
+
+## Phase 6 — Run persistent board campaigns
+
+- Record the measured exception to one-shot fleets in
+  [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md).
+- Enroll multiple Cockpit-managed repositories and prepare their source
+  checkouts together.
+- Refresh provider preflight with one bounded retry and reconcile all three
+  roles across every enrolled repository until explicit stop.
+- **Done when:** one dashboard action starts eligible work in two repositories,
+  waits through human admission or verifier delay, and launches the resulting
+  next-lane work without another action.
 
 ## Later / ideas
 
-- Desired concurrency and explicit automatic refill.
 - Authenticated non-loopback service mode.
 - A dedicated cure profile.
 - Multi-user Cockpit nodes.
@@ -363,3 +381,6 @@ delivery pair and that tag run remain before Phase 5 closes.
 - Queue observation: [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
 - OCI isolation: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
 - OCI workspace: [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
+- Persistent campaigns:
+  [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md),
+  [delivery plan](0003-board-campaigns.md)

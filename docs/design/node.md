@@ -148,6 +148,13 @@ worker claims. The exact projection, role classifier, contract warning, and
 12-worker batch ceiling are defined by the
 [queue and fleet contract](../specs/queue-observation-and-fleets.md).
 
+The measured multi-provider and multi-repository OCI trial later justified an
+explicit persistent exception to that one-shot boundary. A
+[board campaign](board-campaigns.md) prepares every repository enrolled on the
+local node, refreshes provider preflight, and refills bounded role capacity from
+fresh observations until the operator stops it. Cockpit repository enrollment
+is local execution configuration, not a copy of Snowcat control-plane state.
+
 Worker lifecycle and work-attempt lifecycle are deliberately distinct. A
 `running` worker record means that its provider process is still alive; it does
 not assert that the provider holds a Snowcat lease or is still performing work.
@@ -187,3 +194,6 @@ Cockpit into a queue poller or treating a completed lease as a dead process.
 - OCI contract: [rootless OCI workers](../specs/oci-workers.md)
 - OCI workspace boundary: [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
 - Built in: [production roadmap](../plans/0002-production-roadmap.md)
+- Persistent orchestration:
+  [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md),
+  [board campaigns](board-campaigns.md)

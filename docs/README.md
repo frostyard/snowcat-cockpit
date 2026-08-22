@@ -23,12 +23,14 @@ in [org-adrs.md](org-adrs.md).
 - [0005 — Isolate unattended workers in rootless OCI containers](adr/0005-isolate-unattended-workers-in-rootless-oci.md)
 - [0006 — Use self-contained Git directories for OCI workers](adr/0006-use-self-contained-git-directories-for-oci-workers.md)
 - [0007 — Use canonical aliases for ACMM conformance](adr/0007-use-canonical-aliases-for-acmm-conformance.md)
+- [0008 — Run persistent multi-repository board campaigns](adr/0008-run-persistent-multi-repository-board-campaigns.md)
 
 ### Design
 
 - [Cockpit architecture](design/overview.md)
 - [Cockpit node](design/node.md)
 - [Quality loop](design/quality-loop.md)
+- [Board campaigns](design/board-campaigns.md)
 
 ### Specs
 
@@ -46,6 +48,7 @@ in [org-adrs.md](org-adrs.md).
 
 - [tmux and ttyd spike](plans/0001-spike-roadmap.md)
 - [Production Cockpit node](plans/0002-production-roadmap.md)
+- [Multi-repository board campaigns](plans/0003-board-campaigns.md)
 
 ### Organization decisions
 
