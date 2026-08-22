@@ -27,8 +27,10 @@ import (
 )
 
 const (
-	AdapterHost = "host"
-	AdapterOCI  = "oci"
+	AdapterHost    = "host"
+	AdapterOCI     = "oci"
+	OCIModelWork   = "gpt-5.6-sol"
+	OCIModelReview = "gpt-5.6-terra"
 
 	StatusAllocating = "allocating"
 	StatusRunning    = "running"
@@ -69,6 +71,7 @@ type Record struct {
 	NodeID     string     `json:"nodeId"`
 	Adapter    string     `json:"adapter"`
 	Provider   string     `json:"provider"`
+	Model      string     `json:"model,omitempty"`
 	Role       string     `json:"role"`
 	Repository string     `json:"repository"`
 	Source     string     `json:"source"`
@@ -270,10 +273,14 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	}
 	workspace := filepath.Join(manager.stateDirectory, "workspaces", workerID, "checkout")
 	branch := "cockpit/" + workerID
+	model := ""
+	if request.Adapter == AdapterOCI {
+		model = ociModel(request.Role)
+	}
 	now := manager.now().UTC()
 	record := Record{
 		Version: recordVersion, ID: workerID, NodeID: manager.nodeID,
-		Adapter: request.Adapter, Provider: request.Provider, Role: request.Role, Repository: request.Repository,
+		Adapter: request.Adapter, Provider: request.Provider, Model: model, Role: request.Role, Repository: request.Repository,
 		Source: source, Workspace: workspace, BaseRef: request.BaseRef,
 		BaseCommit: baseCommit, Branch: branch, Status: StatusAllocating,
 		Detail: "allocating isolated Git workspace", CreatedAt: now,
@@ -766,6 +773,7 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 		"--pids-limit=512", "--log-driver=none",
 		"--tmpfs=/home/cockpit:rw,size=512m,mode=1777",
 		"--tmpfs=/tmp:rw,size=2g,mode=1777",
+		"--tmpfs=/var/lib:rw,size=512m,mode=1777",
 		"--mount", "type=bind,source=" + record.Workspace + ",destination=/workspace,rw=true",
 		"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "auth.json"), "/run/cockpit/input/codex/auth.json"),
 		"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "config.toml"), "/run/cockpit/input/codex/config.toml"),
@@ -773,8 +781,15 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "config.yml"), "/run/cockpit/input/gh/config.yml"),
 		"--env", "SNOWCAT_MCP_TOKEN",
 		"--env", "GH_TOKEN",
-		manager.oci.Image, prompt,
+		manager.oci.Image, prompt, record.Model,
 	}
+}
+
+func ociModel(role string) string {
+	if role == "reviewer" {
+		return OCIModelReview
+	}
+	return OCIModelWork
 }
 
 func canonicalDirectory(path string) (string, error) {

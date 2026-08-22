@@ -188,6 +188,33 @@ keyring. The secure serve wrapper now projects that token in memory as
 and Snowcat MCP. The implementation item still needs an operator requeue and
 one final OCI delivery run.
 
+The retained workers also measured two missing inspection tools: their
+duplicate-work checks attempted `jq` and ripgrep. The pinned image now carries
+those plus the small build/edit baseline documented by the OCI worker contract;
+tool growth remains evidence-driven.
+
+The PR #67 reviewer then exposed a login-shell path mismatch: the image carried
+Go under `/usr/local/go/bin`, but Codex's Debian login shell reset `PATH` and
+reported `go: command not found`. Stable `/usr/local/bin` links plus home-tmpfs
+`GOPATH` and `GOCACHE` now make the toolchain and its writable caches invariant
+across direct entrypoint and agent-exec shells.
+
+The paired PR #67 review also makes the existing independent-model obligation
+executable: OCI implementation uses `gpt-5.6-sol`, while OCI review uses
+`gpt-5.6-terra`. The model is visible in worker inventory, and the review skill
+still releases any externally authored item whose model matches the reviewer.
+
+The end-to-end pair completed on the corrected boundary. Implementer
+`worker-cfa31d1edc9b43ba` completed attempt 4244, pushed commit `531e93f`, and
+opened draft Firn PR #67 after `make check` and the redirected help-path test
+passed. Independent reviewer `worker-fd0e9655d6a219c6` used `gpt-5.6-terra`
+and completed attempt 4250 with a `pass` verdict at the same immutable head.
+Both one-shot providers exited while their terminals and self-contained
+workspaces remained retained. A final hardened-image smoke test then proved Go
+resolution through a login shell, writable home caches and `/var/lib` scratch,
+and the complete small-tool baseline. Snowcat's pass moved PR #67 out of draft;
+GitHub reported it cleanly mergeable with all eight emitted checks successful.
+
 ## Later / ideas
 
 - Desired concurrency and explicit automatic refill.

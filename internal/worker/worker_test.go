@@ -352,7 +352,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Adapter != AdapterOCI || record.Status != StatusRunning {
+	if record.Adapter != AdapterOCI || record.Model != OCIModelReview || record.Status != StatusRunning {
 		t.Fatalf("record = %#v", record)
 	}
 	excludes, err := os.ReadFile(filepath.Join(record.Workspace, ".git", "info", "exclude"))
@@ -373,7 +373,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		"/tools/podman", "--pull=never", "--read-only", "--read-only-tmpfs=false",
 		"--userns=keep-id:uid=1000,gid=1000", "--cap-drop=ALL",
 		"--security-opt=no-new-privileges", "--log-driver=none", "--env",
-		"SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, record.Workspace, codexHome, ghConfig,
+		"SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, OCIModelReview, record.Workspace, codexHome, ghConfig,
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Podman launch is missing %q: %s", required, argv)

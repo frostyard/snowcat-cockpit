@@ -106,9 +106,9 @@ func runWorkers(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "no managed workers")
 		return 0
 	}
-	fmt.Fprintln(stdout, "WORKER | STATUS | ADAPTER | PROVIDER | ROLE | REPOSITORY | WORKSPACE")
+	fmt.Fprintln(stdout, "WORKER | STATUS | ADAPTER | PROVIDER | MODEL | ROLE | REPOSITORY | WORKSPACE")
 	for _, record := range records {
-		fmt.Fprintf(stdout, "%s | %s | %s | %s | %s | %s | %s\n", record.ID, record.Status, record.Adapter, record.Provider, record.Role, record.Repository, record.Workspace)
+		fmt.Fprintf(stdout, "%s | %s | %s | %s | %s | %s | %s | %s\n", record.ID, record.Status, record.Adapter, record.Provider, record.Model, record.Role, record.Repository, record.Workspace)
 	}
 	return 0
 }

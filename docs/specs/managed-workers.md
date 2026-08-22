@@ -27,6 +27,7 @@ The manager returns a non-secret record:
   "nodeId": "node-<hex>",
   "adapter": "host",
   "provider": "claude",
+  "model": "gpt-5.6-terra or omitted",
   "role": "implementer",
   "repository": "frostyard/firn",
   "source": "/absolute/source",
@@ -112,6 +113,10 @@ HTTP operations:
 13. `host` retains the interactive provider behavior above. `oci` additionally
     MUST follow the [rootless OCI worker](oci-workers.md) contract. The adapter
     is explicit in each request and persisted in the non-secret worker record.
+14. A runtime-selected model MAY be persisted as non-secret worker metadata.
+    OCI role models MUST follow the rootless OCI contract; Cockpit MUST NOT
+    silently claim a different-model review when the selected model matches the
+    review origin.
 
 ## Derived artifacts
 

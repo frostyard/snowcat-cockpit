@@ -30,11 +30,25 @@ The node reads OCI configuration only from its starting environment:
 
 The first slice supports only `provider: codex`, `adapter: oci`, and the
 `podman` runtime. Claude, Copilot, and Docker OCI requests MUST fail before a
-worktree is allocated.
+workspace is allocated.
+
+OCI model selection is role-pinned: discoverers and implementers use
+`gpt-5.6-sol`; reviewers use `gpt-5.6-terra`. The selected model is recorded as
+non-secret worker metadata and shown in inventory. This makes Cockpit-authored
+implementation/review pairs structurally different-model; a reviewer still
+MUST release work when the origin reports the same model.
 
 Build the local image with `make oci-image`. The image source pins Codex CLI
 `0.149.0`, Go `1.26.6`, and both multi-architecture base-image manifest
 digests. Launch uses a pre-existing image with `--pull=never`.
+
+The first-slice command baseline is deliberately small: the base shell and
+Unix utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
+patch, jq, ripgrep, unzip, and `column`. A new tool enters this list only after
+a repository contract or retained worker terminal demonstrates the need.
+Commands that Codex runs through a login shell MUST still resolve `go` and
+`gofmt` through `/usr/local/bin`; `GOPATH` and `GOCACHE` MUST live beneath the
+bounded writable home tmpfs rather than the read-only image filesystem.
 
 ## Rules
 
@@ -54,8 +68,9 @@ digests. Launch uses a pre-existing image with `--pull=never`.
    host networking.
 4. The only host filesystem mounts are the exact worker workspace read-write at
    `/workspace` and the four exact input files read-only below
-   `/run/cockpit/input`. The container home and `/tmp` MUST be bounded tmpfs
-   mounts. The home tmpfs root MAY be mode `1777` for rootless-runtime
+   `/run/cockpit/input`. The container home, `/tmp`, and test scratch at
+   `/var/lib` MUST be bounded tmpfs mounts. The tmpfs roots MAY be mode `1777`
+   for rootless-runtime
    portability; the non-root entrypoint MUST create the actual provider and
    GitHub configuration directories as mode `0700` beneath it.
 5. The runtime receives `--env SNOWCAT_MCP_TOKEN` and `--env GH_TOKEN` with no
@@ -63,9 +78,11 @@ digests. Launch uses a pre-existing image with `--pull=never`.
    first-slice container.
 6. The image entrypoint MUST copy only the four declared input files into the
    tmpfs home, run `gh auth setup-git`, mark `/workspace` safe in the ephemeral
-   Git config, and invoke `codex exec --dangerously-bypass-approvals-and-sandbox`
-   once with Cockpit's bounded role prompt. The bypass is permitted only
-   inside the complete OCI boundary above.
+   Git config, restore a conventional `022` process umask after writing
+   credentials at mode `0600`, and invoke
+   `codex exec --dangerously-bypass-approvals-and-sandbox`
+   once with the role's pinned model and Cockpit's bounded role prompt. The
+   bypass is permitted only inside the complete OCI boundary above.
 7. The foreground Podman process runs in the worker's dedicated tmux pane with
    `remain-on-exit`. Cockpit MUST NOT call `podman logs` or persist provider
    output. A normal one-shot exit reconciles to the existing `exited` process

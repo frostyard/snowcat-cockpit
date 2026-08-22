@@ -310,7 +310,7 @@ function renderWorkers(records) {
     const providerLabel = document.createElement("strong");
     providerLabel.textContent = worker.provider;
     const adapterLabel = document.createElement("small");
-    adapterLabel.textContent = worker.adapter || "host";
+    adapterLabel.textContent = worker.model ? `${worker.adapter || "host"} · ${worker.model}` : worker.adapter || "host";
     providerName.append(providerLabel, adapterLabel);
     provider.append(providerName);
     const role = document.createElement("td");

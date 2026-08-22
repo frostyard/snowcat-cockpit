@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  printf 'cockpit-entrypoint: expected one bounded worker prompt\n' >&2
+if [[ $# -ne 2 ]]; then
+  printf 'cockpit-entrypoint: expected one bounded worker prompt and one pinned model\n' >&2
   exit 64
 fi
 
@@ -16,7 +16,12 @@ install -m 0600 /run/cockpit/input/gh/config.yml "$GH_CONFIG_DIR/config.yml"
 gh auth setup-git >/dev/null
 git config --global --add safe.directory /workspace
 
+# Credentials are already fixed at 0600; repository tooling expects ordinary
+# non-secret files to use the conventional process default.
+umask 022
+
 exec codex exec \
   --dangerously-bypass-approvals-and-sandbox \
+  --model "$2" \
   --cd /workspace \
   "$1"
