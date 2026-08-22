@@ -73,6 +73,11 @@ type ProviderStatus struct {
 	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 }
 
+type launchProbe struct {
+	repository string
+	role       queueview.Role
+}
+
 type Record struct {
 	ID           string             `json:"id,omitempty"`
 	Status       string             `json:"status"`
@@ -130,6 +135,7 @@ type Controller struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	backoff map[string]time.Time
+	probes  map[string]launchProbe
 }
 
 func New(config Config) (*Controller, error) {
@@ -154,6 +160,7 @@ func New(config Config) (*Controller, error) {
 		now:          config.Now,
 		random:       config.Random,
 		backoff:      make(map[string]time.Time),
+		probes:       make(map[string]launchProbe),
 	}
 	record, err := controller.read()
 	if err != nil {
@@ -213,6 +220,7 @@ func (controller *Controller) Start(ctx context.Context, request Request) (Recor
 	controller.cancel = cancel
 	controller.done = make(chan struct{})
 	controller.backoff = make(map[string]time.Time)
+	controller.probes = make(map[string]launchProbe)
 	go controller.run(runContext)
 	return cloneRecord(controller.record), nil
 }
@@ -427,6 +435,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 			active[queueview.Role(record.Role)]++
 		}
 	}
+	startupFailures := controller.inspectLaunchProbes(workers)
 
 	type observation struct {
 		repository managedrepo.Record
@@ -469,6 +478,13 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 			state.ObservedAt = observed.snapshot.ObservedAt
 		})
 	}
+	for _, failure := range startupFailures {
+		controller.setBackoff(failure.repository, failure.role)
+		controller.updateRepository(failure.repository, func(state *RepositoryStatus) {
+			state.Status = StatusDegraded
+			state.Detail = string(failure.role) + " provider exited before launch stabilized; retry is backed off"
+		})
+	}
 
 	for _, role := range []queueview.Role{queueview.RoleDiscoverer, queueview.RoleImplementer, queueview.RoleReviewer} {
 		lane := controller.lane(role)
@@ -506,6 +522,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 					continue
 				}
 				controller.addWorker(record.ID)
+				controller.addLaunchProbe(record.ID, repository.Repository, role)
 				observed.snapshot.Counts[role]--
 				byRepository[repository.Repository] = observed
 				remaining--
@@ -517,6 +534,38 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		}
 	}
 	controller.setRunningStatus(true)
+}
+
+func (controller *Controller) addLaunchProbe(workerID, repository string, role queueview.Role) {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	controller.probes[workerID] = launchProbe{repository: repository, role: role}
+}
+
+func (controller *Controller) inspectLaunchProbes(workers []worker.Record) []launchProbe {
+	byID := make(map[string]worker.Record, len(workers))
+	for _, record := range workers {
+		byID[record.ID] = record
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	failures := make([]launchProbe, 0)
+	for workerID, probe := range controller.probes {
+		record, exists := byID[workerID]
+		if !exists {
+			continue
+		}
+		switch record.Status {
+		case worker.StatusRunning:
+			delete(controller.probes, workerID)
+		case worker.StatusExited, worker.StatusFailed:
+			failures = append(failures, probe)
+			delete(controller.probes, workerID)
+		case worker.StatusStopped, worker.StatusCleaned:
+			delete(controller.probes, workerID)
+		}
+	}
+	return failures
 }
 
 func (controller *Controller) ensureLanePreflight(ctx context.Context, lane Lane, repositories []managedrepo.Record, expiries map[string]time.Time, eligible bool) bool {

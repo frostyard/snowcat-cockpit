@@ -63,19 +63,32 @@ func (queue *fakeQueue) Observe(_ context.Context, repository string) (queueview
 }
 
 type fakeWorkers struct {
-	mu       sync.Mutex
-	launched []worker.LaunchRequest
+	mu           sync.Mutex
+	launched     []worker.LaunchRequest
+	records      []worker.Record
+	launchStatus string
 }
 
 func (workers *fakeWorkers) List(context.Context) ([]worker.Record, error) {
-	return []worker.Record{}, nil
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	return append([]worker.Record(nil), workers.records...), nil
 }
 
 func (workers *fakeWorkers) Launch(_ context.Context, request worker.LaunchRequest) (worker.Record, error) {
 	workers.mu.Lock()
 	defer workers.mu.Unlock()
 	workers.launched = append(workers.launched, request)
-	return worker.Record{ID: "worker-000000000000000" + string(rune('0'+len(workers.launched)))}, nil
+	record := worker.Record{
+		ID:         "worker-000000000000000" + string(rune('0'+len(workers.launched))),
+		Repository: request.Repository,
+		Role:       request.Role,
+		Status:     workers.launchStatus,
+	}
+	if workers.launchStatus != "" {
+		workers.records = append(workers.records, record)
+	}
+	return record, nil
 }
 
 func TestCampaignLaunchesAcrossEveryEnrolledRepositoryAndLane(t *testing.T) {
@@ -186,6 +199,65 @@ func TestExpiredPreflightRefreshesOnlyWhenWorkIsEligible(t *testing.T) {
 	defer preflights.mu.Unlock()
 	if len(preflights.calls) != 1 {
 		t.Fatalf("eligible lane preflight calls = %q, want one", preflights.calls)
+	}
+}
+
+func TestCampaignBacksOffWorkerThatExitsBeforeLaunchStabilizes(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
+		repository.Repository: {queueview.RoleReviewer: 1},
+	}}
+	workers := &fakeWorkers{launchStatus: worker.StatusExited}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, workers)
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if len(workers.launched) != 1 {
+		t.Fatalf("launches = %d, want one before startup backoff", len(workers.launched))
+	}
+	if !controller.inBackoff(repository.Repository, queueview.RoleReviewer) {
+		t.Fatal("reviewer startup exit did not enter launch backoff")
+	}
+}
+
+func TestCampaignDoesNotBackOffWorkerAfterLaunchStabilizes(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
+		repository.Repository: {queueview.RoleReviewer: 1},
+	}}
+	workers := &fakeWorkers{launchStatus: worker.StatusRunning}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, workers)
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	workers.mu.Lock()
+	workers.records[0].Status = worker.StatusExited
+	workers.mu.Unlock()
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if len(workers.launched) != 2 {
+		t.Fatalf("launches = %d, want stable worker exit to permit refill", len(workers.launched))
+	}
+	if controller.inBackoff(repository.Repository, queueview.RoleReviewer) {
+		t.Fatal("stable worker exit unexpectedly entered launch backoff")
 	}
 }
 

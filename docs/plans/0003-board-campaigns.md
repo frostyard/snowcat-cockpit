@@ -54,6 +54,15 @@ retained all seven exited workers, and launched nothing. A new explicit start
 returned it to the empty-board running state. Host no-work and Docker
 active-work paths are exercised; a rootless-Podman campaign remains.
 
+The continuation trial exposed a Docker-specific Copilot 1.0.80 startup
+failure: the standalone CLI unpacked a native module beneath its cache, while
+Docker's home tmpfs was `noexec`. Three still-queued reviews caused 31 retained
+failed terminals before the operator stopped refill. Copilot now receives one
+narrow executable cache tmpfs, and a worker that exits before surviving one
+later reconciliation backs off that repository/role for five minutes. Worker
+terminals and workspaces remain retained, and the startup exit still does not
+assert a Snowcat outcome.
+
 ## Later / ideas
 
 - Import repository slugs from Snowcat if it adds a scoped enrollment-read MCP

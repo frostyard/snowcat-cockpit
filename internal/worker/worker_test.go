@@ -506,6 +506,7 @@ func TestCopilotOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 	for _, required := range []string{
 		image, OCIModelAuto, copilotHome,
 		"/run/cockpit/input/copilot/mcp-config.json", "SNOWCAT_MCP_TOKEN", "GH_TOKEN",
+		"--tmpfs=/home/cockpit/.cache/copilot:rw,exec,size=512m,mode=1777",
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Copilot Podman launch is missing %q: %s", required, argv)
@@ -585,7 +586,7 @@ func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"--read-only-tmpfs=false", "--userns=keep-id", "rw=true",
-		"never-in-argv", "github-never-in-argv", "SECRET_SENTINEL", "--privileged", "--network=host",
+		"/home/cockpit/.cache/copilot", "never-in-argv", "github-never-in-argv", "SECRET_SENTINEL", "--privileged", "--network=host",
 	} {
 		if strings.Contains(argv, forbidden) {
 			t.Errorf("Docker launch contains forbidden %q: %s", forbidden, argv)
@@ -669,7 +670,7 @@ func TestClaudeOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"/run/cockpit/input/codex", "/run/cockpit/input/copilot",
-		"never-in-argv", "https://snowcat.invalid/mcp", "github-never-in-argv", "SECRET_SENTINEL",
+		"/home/cockpit/.cache/copilot", "never-in-argv", "https://snowcat.invalid/mcp", "github-never-in-argv", "SECRET_SENTINEL",
 	} {
 		if strings.Contains(argv, forbidden) {
 			t.Errorf("Claude Podman launch contains forbidden %q: %s", forbidden, argv)

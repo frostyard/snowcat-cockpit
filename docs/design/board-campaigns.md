@@ -69,6 +69,12 @@ Exited workers do not prove that Snowcat work completed. Attempt correlation is
 an independent, delayed observation and may remain unmatched. Fresh queue state
 is the only input to later capacity decisions.
 
+A newly launched worker remains under a startup probe until one later
+reconciliation observes it running. If it exits or loses its retained terminal
+before that point, the controller applies the existing five-minute
+repository/role launch backoff. This bounds a broken provider or container
+entrypoint without interpreting the exit as a queue result.
+
 ### Lifecycle
 
 Campaign state is `starting`, `running`, `degraded`, `stopping`, or `stopped`.

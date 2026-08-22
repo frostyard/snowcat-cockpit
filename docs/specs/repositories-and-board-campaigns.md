@@ -98,7 +98,10 @@ State files are mode `0600` where Unix permissions apply.
    campaign's exact adapter, runtime, and lane provider. The worker independently
    claims at most one item through Snowcat MCP.
 7. A setup, preflight, observation, or launch failure records only a sanitized
-   message. Setup, preflight, and launch retry no sooner than five minutes.
+   message. Setup, preflight, and launch retry no sooner than five minutes. A
+   campaign worker that exits before surviving its first later reconciliation
+   is a launch failure for backoff purposes only; it does not prove a Snowcat
+   outcome.
 8. Empty queue observations leave the campaign running. Human proposal
    admission and delayed pull-request verification may add later work.
 9. Stop and process shutdown MUST NOT stop a worker, delete a source, delete a

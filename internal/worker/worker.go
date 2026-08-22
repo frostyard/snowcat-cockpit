@@ -969,6 +969,7 @@ func (manager *Manager) ociArguments(record Record, image, prompt string) []stri
 		)
 	case "copilot":
 		arguments = append(arguments,
+			"--tmpfs=/home/cockpit/.cache/copilot:rw,exec,size=512m,mode=1777",
 			"--mount", inputMount(filepath.Join(manager.oci.CopilotHome, "mcp-config.json"), "/run/cockpit/input/copilot/mcp-config.json"),
 		)
 	case "claude":
