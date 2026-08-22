@@ -67,5 +67,5 @@ jobs:
           IMAGE: ghcr.io/${{ github.repository }}-worker:${{ matrix.provider }}-${{ github.ref_name }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          printf '### %s worker image\n\n`%s@%s`\n' \
+          printf "### %s worker image\n\n\`%s@%s\`\n" \
             "$PROVIDER" "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
