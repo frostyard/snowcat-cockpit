@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -274,7 +273,7 @@ func writeWorkerError(response http.ResponseWriter, err error) {
 	if status != http.StatusInternalServerError {
 		detail = err.Error()
 	}
-	writeJSON(response, status, map[string]string{"error": fmt.Sprintf("%s", detail)})
+	writeJSON(response, status, map[string]string{"error": detail})
 }
 
 func writeAsset(response http.ResponseWriter, contentType string, content []byte) {

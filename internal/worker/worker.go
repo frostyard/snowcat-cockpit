@@ -676,7 +676,8 @@ func (manager *Manager) stopTerminalLocked(ctx context.Context, record Record) e
 			arguments = []string{"stop", "--ignore", "--time", "10", manager.containerName(record.ID)}
 		}
 		output, stopErr := manager.run(ctx, runtimePath, "", ociHostEnvironment(manager.environment()), arguments...)
-		if stopErr != nil && !(runtimeName == RuntimeDocker && strings.Contains(strings.ToLower(string(output)), "no such container")) {
+		missingDockerContainer := runtimeName == RuntimeDocker && strings.Contains(strings.ToLower(string(output)), "no such container")
+		if stopErr != nil && !missingDockerContainer {
 			return fmt.Errorf("stop OCI worker container: %w", stopErr)
 		}
 	}
@@ -802,14 +803,15 @@ func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) 
 		filepath.Join(manager.oci.GHConfigDir, "hosts.yml"),
 		filepath.Join(manager.oci.GHConfigDir, "config.yml"),
 	}
-	if request.Provider == "codex" {
+	switch request.Provider {
+	case "codex":
 		inputs = append(inputs,
 			filepath.Join(manager.oci.CodexHome, "auth.json"),
 			filepath.Join(manager.oci.CodexHome, "config.toml"),
 		)
-	} else if request.Provider == "copilot" {
+	case "copilot":
 		inputs = append(inputs, filepath.Join(manager.oci.CopilotHome, "mcp-config.json"))
-	} else {
+	case "claude":
 		inputs = append(inputs, filepath.Join(manager.oci.ClaudeHome, ".credentials.json"))
 	}
 	for _, input := range inputs {
@@ -959,16 +961,17 @@ func (manager *Manager) ociArguments(record Record, image, prompt string) []stri
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "hosts.yml"), "/run/cockpit/input/gh/hosts.yml"),
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "config.yml"), "/run/cockpit/input/gh/config.yml"),
 	)
-	if record.Provider == "codex" {
+	switch record.Provider {
+	case "codex":
 		arguments = append(arguments,
 			"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "auth.json"), "/run/cockpit/input/codex/auth.json"),
 			"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "config.toml"), "/run/cockpit/input/codex/config.toml"),
 		)
-	} else if record.Provider == "copilot" {
+	case "copilot":
 		arguments = append(arguments,
 			"--mount", inputMount(filepath.Join(manager.oci.CopilotHome, "mcp-config.json"), "/run/cockpit/input/copilot/mcp-config.json"),
 		)
-	} else {
+	case "claude":
 		arguments = append(arguments,
 			"--mount", inputMount(filepath.Join(manager.oci.ClaudeHome, ".credentials.json"), "/run/cockpit/input/claude/.credentials.json"),
 		)

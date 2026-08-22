@@ -20,7 +20,7 @@ const maxCorrelationItems = 2
 
 var (
 	ErrInvalid     = errors.New("invalid queue observation request")
-	ErrUnavailable = errors.New("Snowcat queue observation is unavailable")
+	ErrUnavailable = errors.New("snowcat queue observation is unavailable")
 	repositoryRE   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	workerLabelRE  = regexp.MustCompile(`^worker-[0-9a-f]{16}$`)
 )
