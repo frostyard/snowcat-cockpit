@@ -40,6 +40,7 @@ in [org-adrs.md](org-adrs.md).
 - [Managed workers](specs/managed-workers.md)
 - [Rootless OCI workers](specs/oci-workers.md)
 - [Queue observation and bounded fleets](specs/queue-observation-and-fleets.md)
+- [Managed repositories and board campaigns](specs/repositories-and-board-campaigns.md)
 - [Worker profiles and locked skill kit](specs/worker-profiles.md)
 - [PR acceptance metric](specs/pr-acceptance-metric.md)
 - [PR review rubric](specs/pr-review-rubric.md)

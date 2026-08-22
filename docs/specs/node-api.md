@@ -13,7 +13,7 @@ snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <ow
 snowcat-cockpit workers [--json] [--state-dir <directory>]
 snowcat-cockpit worker launch --adapter <host|oci> [--runtime <podman|docker>] ...
 snowcat-cockpit worker <observe|attach|stop|cleanup> ...
-snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
+snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>] [--source-root <directory>]
 snowcat-cockpit version
 snowcat-cockpit help
 ```
@@ -27,6 +27,7 @@ commit, UTC build date, and builder identity. Development builds use explicit
 | `listen` | TCP host and port; host MUST resolve syntactically to `127.0.0.1`, `::1`, or `localhost`; default `127.0.0.1:7682` |
 | `state-dir` | Absolute or relative directory; default follows `XDG_STATE_HOME`, then `$HOME/.local/state/snowcat-cockpit` |
 | `skills-dir` | Provider-neutral Snowcat worker-kit root; default follows `SNOWCAT_COCKPIT_SKILLS_DIR`, then `$HOME/.agents/skills` |
+| `source-root` | Root for retained Cockpit-managed repository sources; default `<state-dir>/sources` |
 | `mcp-server` | Provider-local configured MCP server name; contains only letters, digits, `_`, `-`, or `.` |
 
 ## Doctor result
@@ -58,6 +59,12 @@ The text form contains the same checks in a human-readable table.
 | `GET` | `/api/v1/health` | Node identity and process health |
 | `GET` | `/api/v1/doctor` | Current doctor result |
 | `GET` | `/api/v1/profiles` | Current structural worker-profile result |
+| `GET` | `/api/v1/repositories` | Node-local managed repository enrollment |
+| `POST` | `/api/v1/repositories` | Idempotently enroll one repository slug |
+| `POST` | `/api/v1/repositories/{owner}/{name}/setup` | Clone or refresh one retained managed source |
+| `GET` | `/api/v1/campaign` | Most recent multi-repository campaign state |
+| `POST` | `/api/v1/campaign` | Start one persistent campaign across all enrolled repositories |
+| `POST` | `/api/v1/campaign/stop` | Stop future launches without stopping workers |
 | `GET` | `/api/v1/workers` | Current managed-worker inventory |
 | `POST` | `/api/v1/workers/base` | Read-only selected base commit and local upstream relation |
 | `POST` | `/api/v1/queue/snapshot` | One bounded Snowcat queue observation |
@@ -113,6 +120,8 @@ MUST return an HTTP 404.
 13. Base inspection MUST resolve only local Git state, report the selected
     immutable commit and configured local upstream relation, and MUST NOT fetch,
     pull, or mutate the source repository.
+14. Managed repositories and campaigns MUST follow the
+    [repository and board-campaign contract](repositories-and-board-campaigns.md).
 
 ## References
 
@@ -123,3 +132,5 @@ MUST return an HTTP 404.
 - Worker lifecycle contract: [managed workers](managed-workers.md)
 - Queue and batch contract: [queue observation and bounded fleets](queue-observation-and-fleets.md)
 - Unattended execution contract: [rootless OCI workers](oci-workers.md)
+- Persistent campaign contract:
+  [managed repositories and board campaigns](repositories-and-board-campaigns.md)

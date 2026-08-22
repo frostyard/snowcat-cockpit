@@ -218,6 +218,9 @@ func (catalog *Catalog) prepare(ctx context.Context, record Record) (Record, err
 		}
 		baseRef = "origin/" + branch
 	}
+	if !branchRE.MatchString(baseRef) || strings.Contains(baseRef, "..") {
+		return record, fmt.Errorf("resolve managed source default branch failed")
+	}
 	commit, err := catalog.runner.Run(ctx, "git", "-C", record.Source, "rev-parse", "--verify", baseRef+"^{commit}")
 	baseCommit := strings.TrimSpace(string(commit))
 	if err != nil || !commitRE.MatchString(baseCommit) {

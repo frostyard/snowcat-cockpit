@@ -6,6 +6,7 @@ let launchRole = null;
 let fleetRole = null;
 let latestSnapshot = null;
 let latestWorkers = [];
+let latestRepositories = [];
 const workerObservations = new Map();
 
 function formatUptime() {
@@ -64,6 +65,180 @@ function badge(status) {
   element.className = `ph-badge ${tone}`;
   element.textContent = status;
   return element;
+}
+
+function mcpServerFor(provider) {
+  return provider === "copilot" ? "snowcat-mcp" : "snowcat";
+}
+
+function renderRepositories(records) {
+  latestRepositories = records;
+  const tbody = byId("repositories-body");
+  tbody.replaceChildren();
+  if (records.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.className = "ph-empty";
+    cell.textContent = "Enroll a repository once; campaign start prepares its retained source.";
+    row.append(cell);
+    tbody.append(row);
+  }
+  for (const repository of records) {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const name = document.createElement("div");
+    name.className = "ph-name";
+    const strong = document.createElement("strong");
+    strong.textContent = repository.repository;
+    const source = document.createElement("small");
+    source.textContent = repository.source;
+    source.title = repository.source;
+    name.append(strong, source);
+    identity.append(name);
+    const base = document.createElement("td");
+    base.textContent = repository.baseCommit ? repository.baseCommit.slice(0, 12) : "not prepared";
+    base.title = repository.baseRef || "origin/HEAD";
+    const state = document.createElement("td");
+    const stateBadge = badge(repository.status);
+    stateBadge.title = repository.detail;
+    state.append(stateBadge);
+    const actions = document.createElement("td");
+    actions.className = "ph-actions";
+    const setup = workerAction(repository.status === "ready" ? "Refresh" : "Prepare", "secondary", () => setupRepository(repository.repository));
+    actions.append(setup);
+    row.append(identity, base, state, actions);
+    tbody.append(row);
+  }
+  byId("campaign-start").disabled = records.length === 0;
+}
+
+async function loadRepositories() {
+  try {
+    renderRepositories(await requestJSON("/api/v1/repositories"));
+  } catch (error) {
+    byId("campaign-message").textContent = error.message;
+  }
+}
+
+async function enrollRepository(event) {
+  event.preventDefault();
+  const button = byId("repository-enroll");
+  button.disabled = true;
+  byId("campaign-message").textContent = "Adding retained local execution configuration…";
+  try {
+    await requestJSON("/api/v1/repositories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repository: byId("repository-slug").value.trim() }),
+    });
+    byId("repository-slug").value = "";
+    byId("campaign-message").textContent = "Repository enrolled locally. Start prepares every source together.";
+    await loadRepositories();
+  } catch (error) {
+    byId("campaign-message").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function setupRepository(repository) {
+  const [owner, name] = repository.split("/");
+  byId("campaign-message").textContent = `Preparing ${repository} without deleting or resetting retained state…`;
+  try {
+    await requestJSON(`/api/v1/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/setup`, { method: "POST" });
+    byId("campaign-message").textContent = `${repository} is prepared from its refreshed GitHub origin.`;
+  } catch (error) {
+    byId("campaign-message").textContent = error.message;
+  }
+  await loadRepositories();
+}
+
+function renderCampaign(record) {
+  const active = ["starting", "running", "degraded", "stopping"].includes(record.status);
+  const campaignBadge = byId("campaign-badge");
+  campaignBadge.className = `ph-badge ${record.status === "running" ? "ok" : record.status === "degraded" ? "danger" : "warn"}`;
+  campaignBadge.textContent = record.status;
+  byId("campaign-summary").textContent = record.detail;
+  byId("campaign-start").disabled = active || latestRepositories.length === 0;
+  byId("campaign-stop").disabled = !active || record.status === "stopping";
+  for (const id of ["campaign-adapter", "campaign-runtime", "campaign-work-provider", "campaign-review-provider", "campaign-discoverers", "campaign-implementers", "campaign-reviewers"]) {
+    byId(id).disabled = active || (id === "campaign-runtime" && byId("campaign-adapter").value !== "oci");
+  }
+
+  const detail = byId("campaign-detail");
+  detail.replaceChildren();
+  for (const provider of record.providers || []) {
+    const card = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = `${provider.provider} · ${provider.mcpServer}`;
+    const status = document.createElement("small");
+    status.textContent = `${provider.status} · ${provider.detail}`;
+    card.append(name, status);
+    detail.append(card);
+  }
+  for (const repository of record.repositories || []) {
+    const card = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = repository.repository;
+    const status = document.createElement("small");
+    const commit = repository.baseCommit ? ` · ${repository.baseCommit.slice(0, 12)}` : "";
+    status.textContent = `${repository.status}${commit} · ${repository.detail}`;
+    card.append(name, status);
+    detail.append(card);
+  }
+}
+
+async function loadCampaign() {
+  try {
+    renderCampaign(await requestJSON("/api/v1/campaign"));
+  } catch (error) {
+    const campaignBadge = byId("campaign-badge");
+    campaignBadge.className = "ph-badge danger";
+    campaignBadge.textContent = "unavailable";
+    byId("campaign-summary").textContent = error.message;
+  }
+}
+
+async function startCampaign() {
+  const button = byId("campaign-start");
+  button.disabled = true;
+  byId("campaign-message").textContent = "Starting setup and bounded provider preflight for every enrolled repository…";
+  const workProvider = byId("campaign-work-provider").value;
+  const reviewProvider = byId("campaign-review-provider").value;
+  try {
+    const record = await requestJSON("/api/v1/campaign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        adapter: byId("campaign-adapter").value,
+        runtime: byId("campaign-adapter").value === "oci" ? byId("campaign-runtime").value : "",
+        intervalSeconds: 30,
+        discoverer: { provider: workProvider, mcpServer: mcpServerFor(workProvider), capacity: Number(byId("campaign-discoverers").value) },
+        implementer: { provider: workProvider, mcpServer: mcpServerFor(workProvider), capacity: Number(byId("campaign-implementers").value) },
+        reviewer: { provider: reviewProvider, mcpServer: mcpServerFor(reviewProvider), capacity: Number(byId("campaign-reviewers").value) },
+      }),
+    });
+    renderCampaign(record);
+    byId("campaign-message").textContent = "Campaign accepted. Setup and preflight continue in the node.";
+  } catch (error) {
+    byId("campaign-message").textContent = error.message;
+    button.disabled = latestRepositories.length === 0;
+  }
+}
+
+async function stopCampaign() {
+  byId("campaign-stop").disabled = true;
+  byId("campaign-message").textContent = "Stopping future launches; existing workers and workspaces remain retained…";
+  try {
+    renderCampaign(await requestJSON("/api/v1/campaign/stop", { method: "POST" }));
+  } catch (error) {
+    byId("campaign-message").textContent = error.message;
+  }
+}
+
+function syncCampaignRuntime() {
+  byId("campaign-runtime").disabled = byId("campaign-adapter").value !== "oci";
 }
 
 function renderProfiles(snapshot) {
@@ -587,7 +762,13 @@ byId("refresh").addEventListener("click", () => {
   loadChecks();
   loadProfiles();
   loadWorkers();
+  loadRepositories();
+  loadCampaign();
 });
+byId("repository-form").addEventListener("submit", enrollRepository);
+byId("campaign-start").addEventListener("click", startCampaign);
+byId("campaign-stop").addEventListener("click", stopCampaign);
+byId("campaign-adapter").addEventListener("change", syncCampaignRuntime);
 byId("launch-discoverer").addEventListener("click", () => openLaunchDialog("discoverer"));
 byId("launch-implementer").addEventListener("click", () => openLaunchDialog("implementer"));
 byId("launch-reviewer").addEventListener("click", () => openLaunchDialog("reviewer"));
@@ -613,5 +794,7 @@ loadHealth();
 loadChecks();
 loadProfiles();
 loadWorkers();
+loadRepositories();
+loadCampaign();
 setInterval(() => { byId("node-uptime").textContent = formatUptime(); }, 1000);
-setInterval(loadWorkers, 5000);
+setInterval(() => { loadWorkers(); loadCampaign(); }, 5000);

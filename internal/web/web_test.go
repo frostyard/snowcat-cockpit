@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/frostyard/snowcat-cockpit/internal/campaign"
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
+	"github.com/frostyard/snowcat-cockpit/internal/managedrepo"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
 	"github.com/frostyard/snowcat-cockpit/internal/queueview"
 	"github.com/frostyard/snowcat-cockpit/internal/worker"
@@ -56,6 +58,49 @@ type fakeQueueObserver struct {
 	calls      int
 	repository string
 	snapshot   queueview.Snapshot
+}
+
+type fakeRepositoryCatalog struct {
+	records []managedrepo.Record
+}
+
+func (catalog *fakeRepositoryCatalog) List(context.Context) ([]managedrepo.Record, error) {
+	return catalog.records, nil
+}
+
+func (catalog *fakeRepositoryCatalog) Enroll(_ context.Context, repository string) (managedrepo.Record, error) {
+	record := managedrepo.Record{Repository: repository, Source: "/sources/" + strings.ReplaceAll(repository, "/", "-"), Status: managedrepo.StatusPending}
+	catalog.records = append(catalog.records, record)
+	return record, nil
+}
+
+func (catalog *fakeRepositoryCatalog) Setup(_ context.Context, repository string) (managedrepo.Record, error) {
+	for index := range catalog.records {
+		if catalog.records[index].Repository == repository {
+			catalog.records[index].Status = managedrepo.StatusReady
+			catalog.records[index].BaseCommit = strings.Repeat("b", 40)
+			return catalog.records[index], nil
+		}
+	}
+	return managedrepo.Record{}, managedrepo.ErrNotFound
+}
+
+type fakeCampaignController struct {
+	record campaign.Record
+}
+
+func (controller *fakeCampaignController) Get(context.Context) (campaign.Record, error) {
+	return controller.record, nil
+}
+
+func (controller *fakeCampaignController) Start(_ context.Context, request campaign.Request) (campaign.Record, error) {
+	controller.record = campaign.Record{ID: "campaign-test", Status: campaign.StatusStarting, Request: request}
+	return controller.record, nil
+}
+
+func (controller *fakeCampaignController) Stop(context.Context) (campaign.Record, error) {
+	controller.record.Status = campaign.StatusStopping
+	return controller.record, nil
 }
 
 func (observer *fakeQueueObserver) Observe(_ context.Context, repository string) (queueview.Snapshot, error) {
@@ -107,6 +152,8 @@ func TestRoutes(t *testing.T) {
 		},
 		Items: []queueview.Item{{ID: "item-1", Repository: "frostyard/firn", Kind: "ci-signal-fix", Role: queueview.RoleImplementer}},
 	}}
+	repositories := &fakeRepositoryCatalog{records: []managedrepo.Record{{Repository: "frostyard/firn", Source: "/sources/firn", Status: managedrepo.StatusPending}}}
+	campaigns := &fakeCampaignController{record: campaign.Record{Status: campaign.StatusNeverRun, Detail: "no campaign yet"}}
 	handler := New(Config{
 		NodeID:    "node-0123456789abcdef0123456789abcdef",
 		Version:   "test",
@@ -117,9 +164,54 @@ func TestRoutes(t *testing.T) {
 		Profiles: func() profile.Snapshot {
 			return profile.Snapshot{Status: profile.StatusPreflightRequired}
 		},
-		Workers:  workers,
-		Queue:    queue,
-		Attempts: queue,
+		Workers:      workers,
+		Queue:        queue,
+		Attempts:     queue,
+		Repositories: repositories,
+		Campaigns:    campaigns,
+	})
+
+	t.Run("managed repository enrollment and setup", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/repositories", strings.NewReader(`{"repository":"frostyard/updex"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		request = httptest.NewRequest(http.MethodPost, "/api/v1/repositories/frostyard/updex/setup", nil)
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("setup status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var record managedrepo.Record
+		if err := json.NewDecoder(response.Body).Decode(&record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Status != managedrepo.StatusReady || len(record.BaseCommit) != 40 {
+			t.Fatalf("record = %#v", record)
+		}
+	})
+
+	t.Run("start and stop campaign", func(t *testing.T) {
+		body := strings.NewReader(`{"adapter":"oci","runtime":"docker","intervalSeconds":30,"discoverer":{"provider":"claude","mcpServer":"snowcat","capacity":4},"implementer":{"provider":"claude","mcpServer":"snowcat","capacity":4},"reviewer":{"provider":"copilot","mcpServer":"snowcat-mcp","capacity":4}}`)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/campaign", body)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if campaigns.record.Request.Runtime != worker.RuntimeDocker || campaigns.record.Request.Reviewer.MCPServer != "snowcat-mcp" {
+			t.Fatalf("campaign request = %#v", campaigns.record.Request)
+		}
+		request = httptest.NewRequest(http.MethodPost, "/api/v1/campaign/stop", nil)
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || campaigns.record.Status != campaign.StatusStopping {
+			t.Fatalf("stop status = %d, campaign = %#v", response.Code, campaigns.record)
+		}
 	})
 
 	t.Run("queue snapshot", func(t *testing.T) {
@@ -197,6 +289,9 @@ func TestRoutes(t *testing.T) {
 		}
 		if !strings.Contains(response.Body.String(), "Observe once") || !strings.Contains(response.Body.String(), "Launch implementer fleet") {
 			t.Fatal("dashboard queue or bounded-fleet control is missing")
+		}
+		if !strings.Contains(response.Body.String(), "Start all enrolled repositories") {
+			t.Fatal("dashboard multi-repository campaign control is missing")
 		}
 		if strings.Contains(response.Body.String(), "https://") || strings.Contains(response.Body.String(), "http://") {
 			t.Fatal("dashboard contains an external runtime dependency")

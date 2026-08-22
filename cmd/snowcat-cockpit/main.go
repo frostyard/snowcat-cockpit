@@ -17,7 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/frostyard/snowcat-cockpit/internal/campaign"
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
+	"github.com/frostyard/snowcat-cockpit/internal/managedrepo"
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
 	"github.com/frostyard/snowcat-cockpit/internal/queueview"
@@ -495,6 +497,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	listenAddress := flags.String("listen", "127.0.0.1:7682", "loopback address for the dashboard")
 	stateDirectory := flags.String("state-dir", defaultStateDir(), "directory for non-secret node state")
 	skillsDirectory := flags.String("skills-dir", defaultSkillsDir(), "directory containing the Snowcat worker kit")
+	sourceRoot := flags.String("source-root", "", "directory for Cockpit-managed repository sources (defaults beneath state-dir)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -524,6 +527,30 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configure Snowcat queue observation: %v\n", err)
 		return 1
 	}
+	managedSourceRoot := *sourceRoot
+	if managedSourceRoot == "" {
+		managedSourceRoot = filepath.Join(*stateDirectory, "sources")
+	}
+	repositories, err := managedrepo.New(*stateDirectory, managedSourceRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "open managed repository catalog: %v\n", err)
+		return 1
+	}
+	var campaigns *campaign.Controller
+	if queueObserver != nil {
+		campaigns, err = campaign.New(campaign.Config{
+			StateDirectory: *stateDirectory,
+			Repositories:   repositories,
+			Preflights:     &campaignPreflighter{stateDirectory: *stateDirectory, skillsDirectory: *skillsDirectory, runner: preflight.OSRunner{}},
+			Queue:          queueObserver,
+			Workers:        workerManager,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "open board campaign controller: %v\n", err)
+			return 1
+		}
+		defer campaigns.Close()
+	}
 
 	listener, err := net.Listen("tcp", *listenAddress)
 	if err != nil {
@@ -545,9 +572,11 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 				}
 				return snapshot
 			},
-			Workers:  workerManager,
-			Queue:    queueObserver,
-			Attempts: queueObserver,
+			Workers:      workerManager,
+			Queue:        queueObserver,
+			Attempts:     queueObserver,
+			Repositories: repositories,
+			Campaigns:    campaigns,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -569,6 +598,70 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+type campaignPreflighter struct {
+	stateDirectory  string
+	skillsDirectory string
+	runner          preflight.Runner
+}
+
+func (service *campaignPreflighter) Refresh(ctx context.Context, providerID, mcpServer, repository string) (campaign.PreflightResult, error) {
+	if _, err := preflight.Build(providerID, mcpServer, repository, "/preflight-validation"); err != nil {
+		return campaign.PreflightResult{}, fmt.Errorf("invalid provider preflight: %w", err)
+	}
+	structural := profile.Inspect(service.skillsDirectory)
+	structurallyReady := false
+	for _, provider := range structural.Providers {
+		if provider.ID == providerID && provider.Executable.Status == profile.StatusReady && provider.SkillKit.Status == profile.StatusReady {
+			structurallyReady = true
+			break
+		}
+	}
+	if !structurallyReady {
+		return campaign.PreflightResult{Status: campaign.StatusDegraded, Detail: "provider is not structurally ready"}, fmt.Errorf("provider %s is not structurally ready", providerID)
+	}
+	workspace, err := os.MkdirTemp(service.stateDirectory, ".campaign-preflight-")
+	if err != nil {
+		return campaign.PreflightResult{}, fmt.Errorf("create provider preflight workspace: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(workspace) }()
+	for _, providerSkills := range []string{
+		filepath.Join(workspace, ".agents", "skills"),
+		filepath.Join(workspace, ".claude", "skills"),
+	} {
+		if _, err := profile.InstallKit(providerSkills); err != nil {
+			return campaign.PreflightResult{}, fmt.Errorf("seed provider preflight skills: %w", err)
+		}
+	}
+
+	var last campaign.PreflightResult
+	for attempt := 1; attempt <= 2; attempt++ {
+		attemptContext, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		checkedAt := time.Now().UTC()
+		result := preflight.Run(attemptContext, providerID, mcpServer, repository, workspace, service.runner)
+		cancel()
+		expiresAt := checkedAt
+		if result.Status == preflight.StatusReady {
+			expiresAt = checkedAt.Add(15 * time.Minute)
+		}
+		receipt := state.PreflightReceipt{
+			Provider: result.Provider, MCPServer: mcpServer, Status: result.Status,
+			Detail: result.Detail, CheckedAt: checkedAt, ExpiresAt: expiresAt,
+			KitRevision: profile.LockedManifest().Source.Revision,
+		}
+		if err := state.WritePreflight(service.stateDirectory, receipt); err != nil {
+			return campaign.PreflightResult{}, fmt.Errorf("write provider preflight receipt: %w", err)
+		}
+		last = campaign.PreflightResult{Status: result.Status, Detail: result.Detail, ExpiresAt: expiresAt}
+		if result.Status == preflight.StatusReady {
+			return last, nil
+		}
+		if ctx.Err() != nil {
+			return last, ctx.Err()
+		}
+	}
+	return last, fmt.Errorf("provider preflight failed after two attempts")
 }
 
 type snowcatObserver interface {

@@ -43,7 +43,8 @@ production node and bounded fleet contracts.
 ## References
 
 - Implements: [board campaigns](../design/board-campaigns.md),
-  [Cockpit node](../design/node.md)
+  [Cockpit node](../design/node.md),
+  [managed repositories and board campaigns](../specs/repositories-and-board-campaigns.md)
 - Rationale:
   [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md)
 - Existing contracts:

@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/snowcat-cockpit/internal/campaign"
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
 	"github.com/frostyard/snowcat-cockpit/internal/fleet"
+	"github.com/frostyard/snowcat-cockpit/internal/managedrepo"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
 	"github.com/frostyard/snowcat-cockpit/internal/queueview"
 	"github.com/frostyard/snowcat-cockpit/internal/worker"
@@ -34,14 +36,28 @@ type Health struct {
 }
 
 type Config struct {
-	NodeID    string
-	Version   string
-	StartedAt time.Time
-	Doctor    func() doctor.Result
-	Profiles  func() profile.Snapshot
-	Workers   WorkerManager
-	Queue     queueview.Observer
-	Attempts  queueview.AttemptObserver
+	NodeID       string
+	Version      string
+	StartedAt    time.Time
+	Doctor       func() doctor.Result
+	Profiles     func() profile.Snapshot
+	Workers      WorkerManager
+	Queue        queueview.Observer
+	Attempts     queueview.AttemptObserver
+	Repositories RepositoryCatalog
+	Campaigns    CampaignController
+}
+
+type RepositoryCatalog interface {
+	List(context.Context) ([]managedrepo.Record, error)
+	Enroll(context.Context, string) (managedrepo.Record, error)
+	Setup(context.Context, string) (managedrepo.Record, error)
+}
+
+type CampaignController interface {
+	Get(context.Context) (campaign.Record, error)
+	Start(context.Context, campaign.Request) (campaign.Record, error)
+	Stop(context.Context) (campaign.Record, error)
 }
 
 type WorkerManager interface {
@@ -83,6 +99,89 @@ func New(config Config) http.Handler {
 	})
 	mux.HandleFunc("GET /api/v1/profiles", func(response http.ResponseWriter, _ *http.Request) {
 		writeJSON(response, http.StatusOK, config.Profiles())
+	})
+	mux.HandleFunc("GET /api/v1/repositories", func(response http.ResponseWriter, request *http.Request) {
+		if config.Repositories == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "managed repositories are unavailable"})
+			return
+		}
+		records, err := config.Repositories.List(request.Context())
+		if err != nil {
+			writeRepositoryError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusOK, records)
+	})
+	mux.HandleFunc("POST /api/v1/repositories", func(response http.ResponseWriter, request *http.Request) {
+		if config.Repositories == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "managed repositories are unavailable"})
+			return
+		}
+		var input struct {
+			Repository string `json:"repository"`
+		}
+		if !decodeJSON(response, request, &input) {
+			return
+		}
+		record, err := config.Repositories.Enroll(request.Context(), input.Repository)
+		if err != nil {
+			writeRepositoryError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusCreated, record)
+	})
+	mux.HandleFunc("POST /api/v1/repositories/{owner}/{name}/setup", func(response http.ResponseWriter, request *http.Request) {
+		if config.Repositories == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "managed repositories are unavailable"})
+			return
+		}
+		repository := request.PathValue("owner") + "/" + request.PathValue("name")
+		record, err := config.Repositories.Setup(request.Context(), repository)
+		if err != nil {
+			writeRepositoryError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusOK, record)
+	})
+	mux.HandleFunc("GET /api/v1/campaign", func(response http.ResponseWriter, request *http.Request) {
+		if config.Campaigns == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "board campaigns are unavailable"})
+			return
+		}
+		record, err := config.Campaigns.Get(request.Context())
+		if err != nil {
+			writeCampaignError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusOK, record)
+	})
+	mux.HandleFunc("POST /api/v1/campaign", func(response http.ResponseWriter, request *http.Request) {
+		if config.Campaigns == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "board campaigns are unavailable"})
+			return
+		}
+		var input campaign.Request
+		if !decodeJSON(response, request, &input) {
+			return
+		}
+		record, err := config.Campaigns.Start(request.Context(), input)
+		if err != nil {
+			writeCampaignError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusAccepted, record)
+	})
+	mux.HandleFunc("POST /api/v1/campaign/stop", func(response http.ResponseWriter, request *http.Request) {
+		if config.Campaigns == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "board campaigns are unavailable"})
+			return
+		}
+		record, err := config.Campaigns.Stop(request.Context())
+		if err != nil {
+			writeCampaignError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusOK, record)
 	})
 	mux.HandleFunc("GET /api/v1/workers", func(response http.ResponseWriter, request *http.Request) {
 		if config.Workers == nil {
@@ -271,6 +370,40 @@ func writeWorkerError(response http.ResponseWriter, err error) {
 	}
 	detail := "managed-worker operation failed"
 	if status != http.StatusInternalServerError {
+		detail = err.Error()
+	}
+	writeJSON(response, status, map[string]string{"error": detail})
+}
+
+func writeRepositoryError(response http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	detail := "managed repository operation failed"
+	switch {
+	case errors.Is(err, managedrepo.ErrInvalid):
+		status = http.StatusBadRequest
+		detail = err.Error()
+	case errors.Is(err, managedrepo.ErrNotFound):
+		status = http.StatusNotFound
+		detail = err.Error()
+	case errors.Is(err, managedrepo.ErrConflict):
+		status = http.StatusConflict
+		detail = err.Error()
+	}
+	writeJSON(response, status, map[string]string{"error": detail})
+}
+
+func writeCampaignError(response http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	detail := "board campaign operation failed"
+	switch {
+	case errors.Is(err, campaign.ErrInvalid):
+		status = http.StatusBadRequest
+		detail = err.Error()
+	case errors.Is(err, campaign.ErrConflict):
+		status = http.StatusConflict
+		detail = err.Error()
+	case errors.Is(err, campaign.ErrUnavailable):
+		status = http.StatusServiceUnavailable
 		detail = err.Error()
 	}
 	writeJSON(response, status, map[string]string{"error": detail})

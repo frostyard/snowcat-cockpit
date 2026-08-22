@@ -2,8 +2,7 @@
 
 Living document. Rationale:
 [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md).
-Contracts will be pinned in the node API and board-campaign specification as
-the implementation lands.
+Contracts: [managed repositories and board campaigns](../specs/repositories-and-board-campaigns.md).
 
 ## Overview
 
@@ -94,6 +93,7 @@ workspace remain retained for explicit operator action.
 - Rationale:
   [ADR-0008](../adr/0008-run-persistent-multi-repository-board-campaigns.md)
 - Existing contracts:
+  [managed repositories and board campaigns](../specs/repositories-and-board-campaigns.md),
   [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md),
   [managed workers](../specs/managed-workers.md),
   [provider preflight](../specs/provider-preflight.md)

@@ -23,13 +23,14 @@
       <nav class="ph-nav" aria-label="Cockpit sections">
         <div class="ph-nav-group">Console</div>
         <a class="ph-nav-link active" href="#overview"><span class="ph-nav-num">01</span>Overview</a>
-        <a class="ph-nav-link" href="#queue"><span class="ph-nav-num">02</span>Queue</a>
-        <a class="ph-nav-link" href="#fleet"><span class="ph-nav-num">03</span>Fleet</a>
-        <a class="ph-nav-link" href="#readiness"><span class="ph-nav-num">04</span>Readiness</a>
+        <a class="ph-nav-link" href="#campaign"><span class="ph-nav-num">02</span>Campaign</a>
+        <a class="ph-nav-link" href="#queue"><span class="ph-nav-num">03</span>Queue</a>
+        <a class="ph-nav-link" href="#fleet"><span class="ph-nav-num">04</span>Fleet</a>
+        <a class="ph-nav-link" href="#readiness"><span class="ph-nav-num">05</span>Readiness</a>
         <div class="ph-nav-group">Inventory</div>
-        <a class="ph-nav-link" href="#profiles"><span class="ph-nav-num">05</span>Profiles</a>
-        <a class="ph-nav-link" href="#workers"><span class="ph-nav-num">06</span>Workers</a>
-        <span class="ph-nav-link disabled"><span class="ph-nav-num">07</span>Workspaces</span>
+        <a class="ph-nav-link" href="#profiles"><span class="ph-nav-num">06</span>Profiles</a>
+        <a class="ph-nav-link" href="#workers"><span class="ph-nav-num">07</span>Workers</a>
+        <span class="ph-nav-link disabled"><span class="ph-nav-num">08</span>Workspaces</span>
       </nav>
 
       <div class="ph-side-foot">
@@ -82,9 +83,51 @@
           <div class="ph-metric-foot"><span>podman · docker</span><span>optional</span></div>
         </section>
 
+        <section class="ph-card ph-campaign ph-span-full" id="campaign">
+          <div class="ph-card-heading split">
+            <div><span class="ph-index">Persistent · all repositories</span><h2>Board campaign</h2><p id="campaign-summary">Loading local enrollment and campaign state</p></div>
+            <span class="ph-badge" id="campaign-badge">checking</span>
+          </div>
+          <div class="ph-campaign-grid">
+            <div class="ph-campaign-command">
+              <div class="ph-campaign-copy">
+                <strong>Clear every enrolled repository with one bounded controller.</strong>
+                <p>Campaign start prepares managed sources, refreshes provider MCP proof, and fills discovery, implementation, and review lanes until explicit stop.</p>
+              </div>
+              <div class="ph-campaign-config">
+                <label>Execution<select id="campaign-adapter"><option value="oci" selected>OCI · unattended</option><option value="host">Host · interactive</option></select></label>
+                <label>Runtime<select id="campaign-runtime"><option value="podman">Podman · rootless</option><option value="docker">Docker · explicit posture</option></select></label>
+                <label>Discover / implement<select id="campaign-work-provider"><option value="claude" selected>Claude · snowcat</option><option value="codex">Codex · snowcat</option><option value="copilot">Copilot · snowcat-mcp</option></select></label>
+                <label>Review<select id="campaign-review-provider"><option value="copilot" selected>Copilot · snowcat-mcp</option><option value="codex">Codex · snowcat</option><option value="claude">Claude · snowcat</option></select></label>
+                <label>Discoverers<input id="campaign-discoverers" type="number" min="1" max="10" value="4"></label>
+                <label>Implementers<input id="campaign-implementers" type="number" min="1" max="10" value="4"></label>
+                <label>Reviewers<input id="campaign-reviewers" type="number" min="1" max="10" value="4"></label>
+              </div>
+              <div class="ph-campaign-actions">
+                <button class="ph-button ph-campaign-start" id="campaign-start" type="button">Start all enrolled repositories <span>→</span></button>
+                <button class="ph-button secondary" id="campaign-stop" type="button" disabled>Stop refill</button>
+              </div>
+              <p class="ph-form-message" id="campaign-message" role="status"></p>
+            </div>
+            <div class="ph-repositories">
+              <form class="ph-queue-form" id="repository-form">
+                <label><span>Enroll local execution source</span><input id="repository-slug" type="text" placeholder="frostyard/updex" pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" required></label>
+                <button class="ph-button secondary" id="repository-enroll" type="submit">Enroll</button>
+              </form>
+              <div class="ph-table-wrap ph-repository-table-wrap">
+                <table class="ph-table">
+                  <thead><tr><th>Repository</th><th>Prepared base</th><th>State</th><th></th></tr></thead>
+                  <tbody id="repositories-body"><tr><td class="ph-empty" colspan="4">No repositories loaded.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="ph-campaign-detail" id="campaign-detail"></div>
+        </section>
+
         <section class="ph-card ph-table-card ph-span-full" id="queue">
           <div class="ph-table-toolbar ph-queue-toolbar">
-            <div><h2>Snowcat queue</h2><span id="queue-summary">No snapshot taken · observation happens only when requested</span></div>
+            <div><h2>Snowcat queue</h2><span id="queue-summary">Manual one-shot view · campaigns observe independently</span></div>
             <form class="ph-queue-form" id="queue-form">
               <label><span>Repository</span><input id="queue-repository" type="text" placeholder="frostyard/firn" pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" required></label>
               <button class="ph-button" id="queue-observe" type="submit">Observe once</button>
@@ -99,7 +142,7 @@
           <div class="ph-table-wrap">
             <table class="ph-table">
               <thead><tr><th>Kind</th><th>Lane</th><th>Priority</th><th>Delivers</th><th>Allowed actions</th></tr></thead>
-              <tbody id="queue-body"><tr><td class="ph-empty" colspan="5">Take a bounded snapshot to see queued work. Cockpit does not poll.</td></tr></tbody>
+              <tbody id="queue-body"><tr><td class="ph-empty" colspan="5">Take a bounded snapshot to see queued work outside a campaign.</td></tr></tbody>
             </table>
           </div>
         </section>
