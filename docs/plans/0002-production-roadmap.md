@@ -362,6 +362,16 @@ evidence.
   waits through human admission or verifier delay, and launches the resulting
   next-lane work without another action.
 
+The implementation now has a private retained repository catalog, bounded
+source setup, two-attempt provider preflight, a 12-worker global capacity
+ceiling, restart-safe campaign state, and the Pilothouse start/stop surface.
+The live Docker campaign prepared Clix, Core, Mill, and Std together, then
+launched and refilled seven Claude discovery workers across the two non-empty
+repositories while holding active capacity at four. All seven correlate to
+completed Snowcat attempts. The campaign remains idle and running so operator
+admission can prove the implementation/review continuation without another
+start.
+
 ## Later / ideas
 
 - Authenticated non-loopback service mode.

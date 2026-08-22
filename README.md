@@ -1,10 +1,11 @@
 # Snowcat Cockpit
 
 Snowcat Cockpit is a node-local control surface for Snowcat execution capacity.
-It reports machine and provider readiness, launches one retained managed worker
-at a time, and presents lifecycle inventory through one Go binary and an
-embedded, loopback-only Pilothouse dashboard. The original Bash, tmux, and ttyd
-launcher remains available as the measured trial harness.
+It reports machine and provider readiness, launches retained managed workers,
+and can run one bounded campaign across every repository enrolled on the local
+node. One Go binary presents lifecycle inventory through an embedded,
+loopback-only Pilothouse dashboard. The original Bash, tmux, and ttyd launcher
+remains available as the measured trial harness.
 
 Snowcat remains unchanged. Each worker continues to claim and report work
 through its existing MCP configuration.
@@ -74,10 +75,11 @@ Mint this dedicated token with Snowcat's server-enforced `observer` profile:
 npm run queue -- token mint member:you@example.com cockpit-observer --profile observer
 ```
 
-The profile grants only `list_work` and `get_work`. The dashboard observes only
-when you press **Observe once**, launch a fleet, or press **Observe work** for
-one retained worker. A fleet is capped to eligible work and 12 workers,
-launches once, and never refills.
+The profile grants only `list_work` and `get_work`. Outside a running campaign,
+the dashboard observes only when you press **Observe once**, launch a fleet, or
+press **Observe work** for one retained worker. A one-shot fleet is capped to
+eligible work and 12 workers and never refills. An explicitly started board
+campaign is the bounded persistent exception described below.
 
 For the standard local observer file at
 `~/.config/snowcat/profile-observer.env`, build once and use the checked-in
@@ -98,6 +100,33 @@ canonical Snowcat skills byte-for-byte against the revision locked into
 Cockpit. `install-kit` is the only command that materializes those embedded
 skills outside a Cockpit-owned isolated workspace; it never replaces a file
 whose content differs from the lock.
+
+## Clear every enrolled repository
+
+In the **Board campaign** card, enroll each repository slug once. Cockpit
+derives a retained source path beneath `<state-dir>/sources`; the operator does
+not supply a path. **Start all enrolled repositories** then:
+
+1. clones missing managed sources or fetches their credential-free GitHub
+   origins and pins immutable default-branch commits;
+2. refreshes the selected providers' Snowcat MCP preflight, with one immediate
+   retry;
+3. observes all enrolled repositories and fills the three role capacities up
+   to a combined maximum of 12 workers;
+4. remains running while proposals await human admission or Snowcat's verifier
+   creates delayed review work.
+
+The local enrollment is execution configuration, not a copy or assertion of
+Snowcat's control-plane enrollment. Snowcat still decides claim eligibility.
+Campaign stop prevents new launches but never stops a worker or deletes a
+source, terminal, or workspace. On restart an interrupted campaign remains
+stopped until the operator explicitly starts it again.
+
+Use `serve --source-root <directory>` to place retained managed sources outside
+the state directory. No campaign configuration or state contains provider,
+GitHub, observer, or worker lease credentials. See the
+[board-campaign contract](docs/specs/repositories-and-board-campaigns.md) for
+the exact lifecycle and retry bounds.
 
 Launch one retained host worker from the dashboard, or from the CLI:
 
