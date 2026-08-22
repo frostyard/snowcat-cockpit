@@ -156,6 +156,17 @@ async function setupRepository(repository) {
 
 function renderCampaign(record) {
   const active = ["starting", "running", "degraded", "stopping"].includes(record.status);
+  if (record.id && record.request) {
+    byId("campaign-adapter").value = record.request.adapter || "host";
+    byId("campaign-runtime").value = record.request.runtime || "podman";
+    if (record.request.discoverer?.provider === record.request.implementer?.provider) {
+      byId("campaign-work-provider").value = record.request.discoverer.provider;
+    }
+    if (record.request.reviewer?.provider) byId("campaign-review-provider").value = record.request.reviewer.provider;
+    if (record.request.discoverer?.capacity) byId("campaign-discoverers").value = String(record.request.discoverer.capacity);
+    if (record.request.implementer?.capacity) byId("campaign-implementers").value = String(record.request.implementer.capacity);
+    if (record.request.reviewer?.capacity) byId("campaign-reviewers").value = String(record.request.reviewer.capacity);
+  }
   const campaignBadge = byId("campaign-badge");
   campaignBadge.className = `ph-badge ${record.status === "running" ? "ok" : record.status === "degraded" ? "danger" : "warn"}`;
   campaignBadge.textContent = record.status;
