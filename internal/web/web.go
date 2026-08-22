@@ -42,10 +42,12 @@ type Config struct {
 	Profiles  func() profile.Snapshot
 	Workers   WorkerManager
 	Queue     queueview.Observer
+	Attempts  queueview.AttemptObserver
 }
 
 type WorkerManager interface {
 	List(context.Context) ([]worker.Record, error)
+	Get(context.Context, string) (worker.Record, error)
 	Launch(context.Context, worker.LaunchRequest) (worker.Record, error)
 	Stop(context.Context, string) (worker.Record, error)
 	Cleanup(context.Context, string) (worker.Record, error)
@@ -145,6 +147,23 @@ func New(config Config) http.Handler {
 			return
 		}
 		writeJSON(response, http.StatusCreated, record)
+	})
+	mux.HandleFunc("POST /api/v1/workers/{id}/observe", func(response http.ResponseWriter, request *http.Request) {
+		if config.Workers == nil || config.Attempts == nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "Snowcat worker observation is unavailable"})
+			return
+		}
+		record, err := config.Workers.Get(request.Context(), request.PathValue("id"))
+		if err != nil {
+			writeWorkerError(response, err)
+			return
+		}
+		observation, err := config.Attempts.ObserveWorker(request.Context(), record.Repository, record.ID)
+		if err != nil {
+			writeQueueError(response, err)
+			return
+		}
+		writeJSON(response, http.StatusOK, observation)
 	})
 	mux.HandleFunc("POST /api/v1/workers/{id}/stop", func(response http.ResponseWriter, request *http.Request) {
 		if config.Workers == nil {

@@ -151,10 +151,16 @@ not assert that the provider holds a Snowcat lease or is still performing work.
 The two-node Phase 4 trial proved that Snowcat grants one lease when independent
 nodes race for one item, while also proving that interactive Codex and Copilot
 TUIs may stay alive after completion or a no-work result. Cockpit does not infer
-an outcome from an idle terminal, repository and kind, or event timing. Exact
-reconciliation waits for Snowcat's bounded read-only attempt projection tracked
-by [snowcat#192](https://github.com/frostyard/snowcat/issues/192); until then the
-operator may inspect or explicitly stop the retained terminal.
+an outcome from an idle terminal, repository and kind, or event timing.
+
+Snowcat's bounded attempt projection now permits an explicit one-shot
+reconciliation: Cockpit asks `list_work` for the worker record's exact
+repository and stable worker label, then presents `unmatched`, `claimed`, or
+the terminal attempt outcome alongside the local process state. It never runs
+this call on the dashboard's local inventory refresh timer and never persists
+the returned item or attempt. This closes
+[snowcat#192](https://github.com/frostyard/snowcat/issues/192) without turning
+Cockpit into a queue poller or treating a completed lease as a dead process.
 
 ## Operational notes
 

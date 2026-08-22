@@ -298,6 +298,20 @@ func (manager *Manager) List(ctx context.Context) ([]Record, error) {
 	return records, nil
 }
 
+func (manager *Manager) Get(ctx context.Context, workerID string) (Record, error) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+
+	if !workerIDRE.MatchString(workerID) {
+		return Record{}, fmt.Errorf("%w: invalid worker ID", ErrInvalid)
+	}
+	record, err := manager.read(workerID)
+	if err != nil {
+		return Record{}, err
+	}
+	return manager.reconcile(ctx, record), nil
+}
+
 func (manager *Manager) Stop(ctx context.Context, workerID string) (Record, error) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()

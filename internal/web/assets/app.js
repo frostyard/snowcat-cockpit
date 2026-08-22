@@ -5,6 +5,8 @@ let readyProviders = [];
 let launchRole = null;
 let fleetRole = null;
 let latestSnapshot = null;
+let latestWorkers = [];
+const workerObservations = new Map();
 
 function formatUptime() {
   if (!startedAt) return "—";
@@ -252,6 +254,21 @@ async function openWorkerConsole(workerId) {
   }
 }
 
+async function observeWorker(workerId) {
+  workerObservations.set(workerId, {
+    status: "checking",
+    detail: "Taking one exact Snowcat observation…",
+  });
+  renderWorkers(latestWorkers);
+  try {
+    const observation = await requestJSON(`/api/v1/workers/${workerId}/observe`, { method: "POST" });
+    workerObservations.set(workerId, observation);
+  } catch (error) {
+    workerObservations.set(workerId, { status: "error", detail: error.message });
+  }
+  renderWorkers(latestWorkers);
+}
+
 function renderWorkers(records) {
   const tbody = byId("workers-body");
   tbody.replaceChildren();
@@ -278,6 +295,15 @@ function renderWorkers(records) {
 
     const state = document.createElement("td");
     state.append(badge(worker.status));
+    const observation = workerObservations.get(worker.id);
+    if (observation) {
+      const workState = document.createElement("small");
+      workState.className = "ph-work-state";
+      const item = observation.itemId ? ` · ${observation.itemId.slice(0, 8)}` : "";
+      workState.textContent = `work ${observation.status}${item}`;
+      workState.title = observation.detail;
+      state.append(workState);
+    }
     const provider = document.createElement("td");
     provider.textContent = worker.provider;
     const role = document.createElement("td");
@@ -292,6 +318,9 @@ function renderWorkers(records) {
     workspace.append(workspacePath);
     const actions = document.createElement("td");
     actions.className = "ph-actions";
+    const observe = workerAction("Observe work", "secondary", () => observeWorker(worker.id));
+    observe.disabled = observation?.status === "checking";
+    actions.append(observe);
     if (["running", "exited", "failed"].includes(worker.status)) {
       actions.append(workerAction("Open terminal", "primary", () => openWorkerConsole(worker.id)));
       actions.append(workerAction("Stop", "secondary", () => mutateWorker(worker.id, "stop")));
@@ -319,7 +348,8 @@ function renderWorkers(records) {
 
 async function loadWorkers() {
   try {
-    renderWorkers(await requestJSON("/api/v1/workers"));
+    latestWorkers = await requestJSON("/api/v1/workers");
+    renderWorkers(latestWorkers);
   } catch (error) {
     byId("workers-badge").className = "ph-badge danger";
     byId("workers-badge").textContent = "error";

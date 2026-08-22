@@ -16,10 +16,11 @@ If both variables are absent, the node starts with queue observation
 unavailable and single-worker operations unchanged. If only one is present or
 the URL is invalid, `serve` MUST fail without printing the token.
 
-Until Snowcat provides server-enforced tool scopes, the token MUST be minted
-with the synthetic, never-seeded claim-kind restriction
-`cockpit-observer-no-claim`. Cockpit invokes only `list_work`; this compatibility
-restriction does not claim to be a complete authorization boundary.
+The token MUST be minted with Snowcat's server-enforced `observer` profile,
+which grants only `list_work` and `get_work`. Cockpit invokes only `list_work`.
+A legacy token carrying the synthetic `cockpit-observer-no-claim` kind
+restriction is not sufficient because a kind restriction does not restrict MCP
+tools.
 
 ## Local launch wrapper
 
@@ -44,9 +45,10 @@ restriction does not claim to be a complete authorization boundary.
 | --- | --- | --- |
 | `POST` | `/api/v1/queue/snapshot` | Take and return one bounded queued-work snapshot |
 | `POST` | `/api/v1/fleets` | Take one fresh snapshot and launch one bounded batch |
+| `POST` | `/api/v1/workers/{id}/observe` | Correlate one retained worker with its Snowcat attempt |
 
-Both endpoints require `Content-Type: application/json` and reject unknown
-fields.
+The snapshot and fleet endpoints require `Content-Type: application/json` and
+reject unknown fields. Worker observation has no request body.
 
 Snapshot request:
 
@@ -111,6 +113,38 @@ the existing managed-worker launch exactly `planned` times. The result includes
 used for the decision. Zero planned launches return HTTP 200; a complete batch
 returns 201; a partial batch returns 207.
 
+Worker observation makes exactly one Snowcat `list_work` call with the worker
+record's exact repository, its exact `worker-<hex>` ID as `label`, and
+`limit: 2`. It does not filter by item status. Zero results produce
+`unmatched`; two results produce `ambiguous`; one result MUST contain exactly
+one matching attempt. A matching attempt with no outcome produces `claimed`;
+the only accepted terminal outcomes are `completed`, `blocked`, `released`,
+and `expired`.
+
+```json
+{
+  "workerId": "worker-0123456789abcdef",
+  "repository": "frostyard/firn",
+  "observedAt": "RFC3339 timestamp",
+  "status": "unmatched|ambiguous|claimed|completed|blocked|released|expired",
+  "detail": "bounded non-secret explanation",
+  "itemId": "Snowcat UUID when matched",
+  "kind": "ci-signal-fix when matched",
+  "itemStatus": "completed when matched",
+  "attempt": {
+    "sequence": 4212,
+    "claimedAt": "RFC3339 timestamp",
+    "label": "worker-0123456789abcdef",
+    "outcome": "completed",
+    "endedAt": "RFC3339 timestamp"
+  }
+}
+```
+
+The observation response is request-only. Cockpit MUST NOT store the Snowcat
+item, attempt, or derived work status in its worker record. Provider process
+state and Snowcat work state remain distinct.
+
 ## Role classification
 
 Classification is deterministic and case-sensitive:
@@ -145,14 +179,13 @@ A contract is suspicious when `requiredArtifact: pull-request` lacks
 - A batch MUST NOT refill after launch. Each worker independently claims at
   most one item through Snowcat MCP; Snowcat remains authoritative under
   concurrent nodes.
-- Cockpit MUST NOT claim worker-to-item correlation until Snowcat exposes the
-  safe read projection tracked in
-  [frostyard/snowcat#192](https://github.com/frostyard/snowcat/issues/192).
+- Worker correlation MUST validate the exact repository and label projection;
+  it MUST fail closed on an unknown outcome or malformed match.
 
 ## References
 
 - Rationale: [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
 - Context: [Cockpit node](../design/node.md)
 - Worker lifecycle: [managed workers](managed-workers.md)
-- Snowcat prerequisites: [observer scopes](https://github.com/frostyard/snowcat/issues/191),
+- Upstream contracts: [observer scopes](https://github.com/frostyard/snowcat/issues/191),
   [worker correlation](https://github.com/frostyard/snowcat/issues/192)

@@ -80,6 +80,72 @@ func TestHTTPObserverTakesOneBoundedSnapshot(t *testing.T) {
 	}
 }
 
+func TestHTTPObserverCorrelatesOneExactWorkerAttempt(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var input rpcRequest
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if input.Params.Arguments.Status != "" || input.Params.Arguments.Repository != "frostyard/firn" || input.Params.Arguments.Label != "worker-0123456789abcdef" || input.Params.Arguments.Limit != maxCorrelationItems {
+			t.Fatalf("arguments = %#v", input.Params.Arguments)
+		}
+		payload := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"item-1\",\"repository\":\"frostyard/firn\",\"kind\":\"ci-signal-fix\",\"status\":\"completed\",\"attempts\":[{\"sequence\":42,\"claimedAt\":\"2026-08-21T19:30:30Z\",\"label\":\"worker-0123456789abcdef\",\"outcome\":\"completed\",\"endedAt\":\"2026-08-21T19:35:47Z\"}]}]"}]}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(payload)),
+			Request:    request,
+		}, nil
+	})}
+	now := time.Date(2026, 8, 21, 20, 0, 0, 0, time.UTC)
+	observer, err := NewHTTPObserver(HTTPConfig{Endpoint: "https://snowcat.test/mcp", Token: "secret", HTTPClient: client, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := observer.ObserveWorker(context.Background(), "frostyard/firn", "worker-0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" || result.ItemID != "item-1" || result.Attempt == nil || result.Attempt.Sequence != 42 || result.ObservedAt != now {
+		t.Fatalf("observation = %#v", result)
+	}
+}
+
+func TestHTTPObserverReportsUnmatchedAndAmbiguousWorkers(t *testing.T) {
+	t.Parallel()
+
+	responses := []string{
+		`[]`,
+		`[{"id":"one","repository":"frostyard/firn","kind":"ci-signal-fix","status":"queued","attempts":[{"sequence":1,"claimedAt":"2026-08-21T19:30:30Z","label":"worker-0123456789abcdef"}]},{"id":"two","repository":"frostyard/firn","kind":"pr-cure","status":"queued","attempts":[{"sequence":2,"claimedAt":"2026-08-21T19:31:30Z","label":"worker-0123456789abcdef"}]}]`,
+	}
+	var call atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		index := int(call.Add(1)) - 1
+		payload, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"result": map[string]any{"content": []map[string]string{{"type": "text", "text": responses[index]}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(payload))), Request: request}, nil
+	})}
+	observer, err := NewHTTPObserver(HTTPConfig{Endpoint: "https://snowcat.test/mcp", Token: "secret", HTTPClient: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := observer.ObserveWorker(context.Background(), "frostyard/firn", "worker-0123456789abcdef")
+	if err != nil || first.Status != "unmatched" {
+		t.Fatalf("unmatched = %#v, %v", first, err)
+	}
+	second, err := observer.ObserveWorker(context.Background(), "frostyard/firn", "worker-0123456789abcdef")
+	if err != nil || second.Status != "ambiguous" {
+		t.Fatalf("ambiguous = %#v, %v", second, err)
+	}
+}
+
 func TestFirstSSEDataSupportsMultilineDataAndCRLF(t *testing.T) {
 	t.Parallel()
 	payload, err := firstSSEData([]byte(": keepalive\r\nevent: message\r\ndata: {\"one\":\r\ndata: 1}\r\n\r\n"))

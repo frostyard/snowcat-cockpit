@@ -11,7 +11,7 @@ snowcat-cockpit install-kit [--json] [--skills-dir <directory>]
 snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
 snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
 snowcat-cockpit workers [--json] [--state-dir <directory>]
-snowcat-cockpit worker <launch|attach|stop|cleanup> ...
+snowcat-cockpit worker <launch|observe|attach|stop|cleanup> ...
 snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
 snowcat-cockpit version
 snowcat-cockpit help
@@ -57,6 +57,7 @@ The text form contains the same checks in a human-readable table.
 | `POST` | `/api/v1/queue/snapshot` | One bounded Snowcat queue observation |
 | `POST` | `/api/v1/fleets` | One snapshot-capped managed-worker batch |
 | `POST` | `/api/v1/workers` | Launch one managed worker |
+| `POST` | `/api/v1/workers/{id}/observe` | One exact Snowcat work-attempt observation |
 | `POST` | `/api/v1/workers/{id}/stop` | Stop one worker and retain its workspace |
 | `POST` | `/api/v1/workers/{id}/console` | Open one loopback worker terminal URL |
 | `DELETE` | `/api/v1/workers/{id}` | Explicitly clean one non-running workspace |
@@ -97,7 +98,7 @@ MUST return an HTTP 404.
    authority and output-retention contract.
 10. Worker operations MUST follow the [managed-worker](managed-workers.md)
     lifecycle and retention contract.
-11. Queue snapshots and batch launches MUST follow the
+11. Queue snapshots, worker observations, and batch launches MUST follow the
     [queue observation and bounded fleets](queue-observation-and-fleets.md)
     contract.
 

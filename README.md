@@ -56,12 +56,16 @@ export SNOWCAT_COCKPIT_MCP_TOKEN
 go run ./cmd/snowcat-cockpit serve
 ```
 
-Until Snowcat [issue #191](https://github.com/frostyard/snowcat/issues/191)
-adds tool-scoped credentials, mint this dedicated
-token with the never-seeded `cockpit-observer-no-claim` kind restriction. The
-dashboard observes only when you press **Observe once** or launch a fleet. A
-fleet is capped to eligible work and 12 workers, launches once, and never
-refills.
+Mint this dedicated token with Snowcat's server-enforced `observer` profile:
+
+```bash
+npm run queue -- token mint member:you@example.com cockpit-observer --profile observer
+```
+
+The profile grants only `list_work` and `get_work`. The dashboard observes only
+when you press **Observe once**, launch a fleet, or press **Observe work** for
+one retained worker. A fleet is capped to eligible work and 12 workers,
+launches once, and never refills.
 
 For the standard local observer file at
 `~/.config/snowcat/observer-token.env`, build once and use the checked-in
@@ -101,6 +105,7 @@ go run ./cmd/snowcat-cockpit worker launch \
   --base-ref HEAD
 
 go run ./cmd/snowcat-cockpit workers
+go run ./cmd/snowcat-cockpit worker observe worker-0123456789abcdef
 go run ./cmd/snowcat-cockpit worker attach worker-0123456789abcdef
 go run ./cmd/snowcat-cockpit worker stop worker-0123456789abcdef
 go run ./cmd/snowcat-cockpit worker cleanup worker-0123456789abcdef
@@ -108,7 +113,8 @@ go run ./cmd/snowcat-cockpit worker cleanup worker-0123456789abcdef
 
 Launch creates a unique `cockpit/<worker-id>` branch and Git worktree. Stop
 retains the workspace; cleanup refuses a running or dirty workspace and leaves
-the branch intact.
+the branch intact. Observe makes one exact, read-only Snowcat correlation call;
+the result is displayed but never written into the worker record.
 
 Build a standalone binary with `make build`; the result is
 `dist/snowcat-cockpit`.

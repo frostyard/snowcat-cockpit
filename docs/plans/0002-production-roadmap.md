@@ -90,7 +90,7 @@ completion is not necessarily OS-process exit. Cockpit therefore exposes a
 distinct read-only discoverer role; it does not broaden the implementer
 selector or claim queue work itself.
 
-## Phase 4 — Launch bounded fleets
+## Phase 4 — Launch bounded fleets (complete 2026-08-21)
 
 - Decide the one-shot observation and credential boundary in
   [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md).
@@ -99,8 +99,9 @@ selector or claim queue work itself.
   role; flag suspicious authority such as change work lacking `open-pr`.
 - Reconcile requested launches to local slots once; do not refill.
 - **Done when:** two nodes may each launch a bounded batch against one Snowcat
-  service and every worker either claims one distinct item or exits cleanly
-  with no work.
+  service, Snowcat grants at most one lease per item, and an explicit bounded
+  observation distinguishes a claimed or completed attempt from no work
+  without inferring either from provider-process state.
 
 The first three-lane host batch launched Codex and Claude discoverers beside a
 Copilot reviewer. Claude and Copilot completed their Snowcat work, but both
@@ -114,9 +115,7 @@ The resulting Firn delivery loop then ran end to end: the operator admitted a
 discovery proposal, a fresh Codex implementer completed the authorized fix and
 opened its pull request, a fresh Copilot reviewer returned `pass`, and the
 operator merged the pull request. This validates all three role contracts and
-Snowcat's human admission and merge boundaries. What remains in Phase 4 is to
-turn those individually launched workers into one bounded batch operation and
-to reconcile Snowcat completion with provider-process state.
+Snowcat's human admission and merge boundaries.
 
 The first bounded-batch slice now follows the
 [queue and fleet contract](../specs/queue-observation-and-fleets.md): an
@@ -124,9 +123,10 @@ operator takes one 100-item `list_work` snapshot, sees deterministic lane and
 delivery-contract classification, and launches at most 12 workers capped to
 eligible work. The batch observes again at launch time, stops on the first
 allocation failure, retains every created workspace, and never refills.
-Snowcat issues [#191](https://github.com/frostyard/snowcat/issues/191) and
-[#192](https://github.com/frostyard/snowcat/issues/192) track the remaining
-server-side observer scope and lifecycle-correlation contracts.
+Snowcat [#191](https://github.com/frostyard/snowcat/issues/191) delivered a
+server-enforced observer tool profile, and
+[#192](https://github.com/frostyard/snowcat/issues/192) delivered bounded
+attempt history plus exact worker-label filtering.
 
 The two-node arbitration trial passed on 2026-08-21. Two Cockpit nodes launched
 one Codex and one Copilot implementer from independent state directories within
@@ -141,13 +141,13 @@ Snowcat's arbitration and Cockpit's execution boundary.
 
 Both interactive provider TUIs remained alive after their queue attempt, so
 both local worker records correctly continued to describe a running provider
-process. The read-only Snowcat projection exposed the authenticated lease
-principal but not the winning worker's client label; only the operator's
-terminal observation could attribute the lease to Codex. Automatic
-completed/no-work reconciliation therefore remains gated on Snowcat
-[#192](https://github.com/frostyard/snowcat/issues/192). That reconciliation,
-followed by a repeat trial in which terminal worker state settles without
-operator inference, remains before Phase 4 is complete.
+process. After the upstream contracts deployed, Cockpit's explicit observation
+identified Codex worker `worker-e3bbb7d8995679a8` as attempt 4212 with outcome
+`completed` on the exact `pr-cure` item, and identified Copilot worker
+`worker-e21e726ad6bb8825` as `unmatched`. The result required no terminal
+inspection, did not alter either process record, and was not persisted. Phase 4
+therefore closes with bounded operator-triggered correlation; automatic polling
+and process termination remain intentionally outside its boundary.
 
 ## Phase 5 — Harden container delivery
 

@@ -25,6 +25,15 @@ func (manager *fakeWorkerManager) List(context.Context) ([]worker.Record, error)
 	return manager.records, nil
 }
 
+func (manager *fakeWorkerManager) Get(_ context.Context, workerID string) (worker.Record, error) {
+	for _, record := range manager.records {
+		if record.ID == workerID {
+			return record, nil
+		}
+	}
+	return worker.Record{}, worker.ErrNotFound
+}
+
 func (manager *fakeWorkerManager) Launch(_ context.Context, request worker.LaunchRequest) (worker.Record, error) {
 	manager.launch = request
 	manager.launches = append(manager.launches, request)
@@ -46,6 +55,15 @@ func (observer *fakeQueueObserver) Observe(_ context.Context, repository string)
 	observer.calls++
 	observer.repository = repository
 	return observer.snapshot, nil
+}
+
+func (observer *fakeQueueObserver) ObserveWorker(_ context.Context, repository, workerID string) (queueview.WorkerObservation, error) {
+	observer.calls++
+	observer.repository = repository
+	return queueview.WorkerObservation{
+		WorkerID: workerID, Repository: repository, Status: "completed",
+		Detail: "Snowcat reports this worker attempt as completed", ItemID: "item-1", Kind: "ci-signal-fix", ItemStatus: "completed",
+	}, nil
 }
 
 func (manager *fakeWorkerManager) Stop(_ context.Context, workerID string) (worker.Record, error) {
@@ -70,7 +88,7 @@ func TestRoutes(t *testing.T) {
 	t.Parallel()
 
 	startedAt := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	workers := &fakeWorkerManager{records: []worker.Record{{ID: "worker-fedcba9876543210", Status: worker.StatusExited}}}
+	workers := &fakeWorkerManager{records: []worker.Record{{ID: "worker-fedcba9876543210", Status: worker.StatusExited, Repository: "frostyard/firn"}}}
 	queue := &fakeQueueObserver{snapshot: queueview.Snapshot{
 		Repository: "frostyard/firn",
 		ObservedAt: startedAt,
@@ -92,8 +110,9 @@ func TestRoutes(t *testing.T) {
 		Profiles: func() profile.Snapshot {
 			return profile.Snapshot{Status: profile.StatusPreflightRequired}
 		},
-		Workers: workers,
-		Queue:   queue,
+		Workers:  workers,
+		Queue:    queue,
+		Attempts: queue,
 	})
 
 	t.Run("queue snapshot", func(t *testing.T) {
@@ -200,6 +219,22 @@ func TestRoutes(t *testing.T) {
 		}
 		if !foundExited {
 			t.Fatalf("records = %#v", records)
+		}
+	})
+
+	t.Run("observe exact worker attempt", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/workers/worker-fedcba9876543210/observe", nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var observation queueview.WorkerObservation
+		if err := json.NewDecoder(response.Body).Decode(&observation); err != nil {
+			t.Fatal(err)
+		}
+		if observation.Status != "completed" || observation.WorkerID != "worker-fedcba9876543210" || observation.ItemID != "item-1" {
+			t.Fatalf("observation = %#v", observation)
 		}
 	})
 

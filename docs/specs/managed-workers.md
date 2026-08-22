@@ -46,6 +46,7 @@ CLI operations:
 ```text
 snowcat-cockpit workers [--json] [--state-dir <directory>]
 snowcat-cockpit worker launch --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+snowcat-cockpit worker observe [--json] [--state-dir <directory>] <worker-id>
 snowcat-cockpit worker attach [--state-dir <directory>] <worker-id>
 snowcat-cockpit worker stop [--state-dir <directory>] <worker-id>
 snowcat-cockpit worker cleanup [--state-dir <directory>] <worker-id>
@@ -57,6 +58,7 @@ HTTP operations:
 | --- | --- | --- |
 | `GET` | `/api/v1/workers` | Current records reconciled with tmux |
 | `POST` | `/api/v1/workers` | Launch one worker from a JSON request |
+| `POST` | `/api/v1/workers/{id}/observe` | Take one exact Snowcat attempt observation |
 | `POST` | `/api/v1/workers/{id}/stop` | Stop that worker's tmux server |
 | `POST` | `/api/v1/workers/{id}/console` | Start or reuse one loopback ttyd console and return its local URL |
 | `DELETE` | `/api/v1/workers/{id}` | Clean a non-running worker workspace |
@@ -92,7 +94,11 @@ HTTP operations:
    automatic worktree or terminal deletion.
 10. A launch is local process creation, not evidence that Snowcat work was
     claimed or completed.
-11. The dashboard console MUST bind ttyd to the platform loopback interface,
+11. Work observation MUST be explicit, MUST follow the
+    [queue observation contract](queue-observation-and-fleets.md), and MUST NOT
+    modify the worker record. Process state and Snowcat attempt state are
+    independent.
+12. The dashboard console MUST bind ttyd to the platform loopback interface,
     MUST allow at most one writable client, MUST attach only to the selected
     worker socket, and MUST stop with the Cockpit node without stopping tmux.
     Cockpit MUST NOT proxy, capture, or persist its terminal contents.
@@ -105,6 +111,7 @@ HTTP operations:
 | Workspace branch | `cockpit/<worker-id>` |
 | tmux socket | Private short runtime directory plus node and worker IDs |
 | Dashboard worker inventory | `GET /api/v1/workers` |
+| Live Snowcat work state | Explicit `worker observe` or dashboard action; never persisted |
 
 ## References
 

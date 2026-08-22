@@ -115,18 +115,74 @@ func runWorkers(args []string, stdout, stderr io.Writer) int {
 
 func runWorker(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "worker requires launch, attach, stop, or cleanup")
+		fmt.Fprintln(stderr, "worker requires launch, observe, attach, stop, or cleanup")
 		return 2
 	}
 	switch args[0] {
 	case "launch":
 		return runWorkerLaunch(args[1:], stdout, stderr)
+	case "observe":
+		return runWorkerObserve(args[1:], stdout, stderr)
 	case "attach", "stop", "cleanup":
 		return runWorkerAction(args[0], args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown worker action %q\n", args[0])
 		return 2
 	}
+}
+
+func runWorkerObserve(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("worker observe", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDirectory := flags.String("state-dir", defaultStateDir(), "directory containing managed-worker state")
+	skillsDirectory := flags.String("skills-dir", defaultSkillsDir(), "directory containing the locked Snowcat worker kit")
+	jsonOutput := flags.Bool("json", false, "write the work-attempt observation as JSON")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 1 {
+		fmt.Fprintln(stderr, "worker observe requires one worker ID")
+		return 2
+	}
+	manager, err := newWorkerManager(*stateDirectory, *skillsDirectory)
+	if err != nil {
+		fmt.Fprintf(stderr, "open managed-worker state: %v\n", err)
+		return 1
+	}
+	record, err := manager.Get(context.Background(), flags.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "observe managed worker: %v\n", err)
+		return 1
+	}
+	observer, err := queueObserverFromLookup(os.Getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "configure Snowcat worker observation: %v\n", err)
+		return 1
+	}
+	if observer == nil {
+		fmt.Fprintln(stderr, "Snowcat worker observation is not configured")
+		return 1
+	}
+	observation, err := observer.ObserveWorker(context.Background(), record.Repository, record.ID)
+	if err != nil {
+		fmt.Fprintf(stderr, "observe managed worker: %v\n", err)
+		return 1
+	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(observation); err != nil {
+			fmt.Fprintf(stderr, "write worker observation: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Fprintf(stdout, "%s work: %s\n", observation.WorkerID, observation.Status)
+	fmt.Fprintln(stdout, observation.Detail)
+	if observation.ItemID != "" {
+		fmt.Fprintf(stdout, "Item: %s (%s, %s)\n", observation.ItemID, observation.Kind, observation.ItemStatus)
+	}
+	return 0
 }
 
 func runWorkerLaunch(args []string, stdout, stderr io.Writer) int {
@@ -478,8 +534,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 				}
 				return snapshot
 			},
-			Workers: workerManager,
-			Queue:   queueObserver,
+			Workers:  workerManager,
+			Queue:    queueObserver,
+			Attempts: queueObserver,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -503,7 +560,12 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func queueObserverFromLookup(lookup func(string) string) (queueview.Observer, error) {
+type snowcatObserver interface {
+	queueview.Observer
+	queueview.AttemptObserver
+}
+
+func queueObserverFromLookup(lookup func(string) string) (snowcatObserver, error) {
 	endpoint := lookup("SNOWCAT_COCKPIT_MCP_URL")
 	token := lookup("SNOWCAT_COCKPIT_MCP_TOKEN")
 	if endpoint == "" && token == "" {
@@ -615,7 +677,7 @@ func printUsage(output io.Writer) {
   snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
   snowcat-cockpit workers [--json] [--state-dir <directory>]
   snowcat-cockpit worker launch --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
-  snowcat-cockpit worker attach|stop|cleanup [options] <worker-id>
+  snowcat-cockpit worker observe|attach|stop|cleanup [options] <worker-id>
   snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
   snowcat-cockpit version
   snowcat-cockpit help`)
