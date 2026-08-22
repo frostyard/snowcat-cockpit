@@ -122,7 +122,7 @@ launches to the resulting image ID:
 ```bash
 make oci-image
 # Run the export command printed by make oci-image.
-read -rsp 'Snowcat worker token: ' SNOWCAT_MCP_TOKEN
+read -rsp 'Snowcat worker token: ' SNOWCAT_MCP_TOKEN; echo
 export SNOWCAT_MCP_TOKEN
 
 go run ./cmd/snowcat-cockpit worker launch \
@@ -137,8 +137,10 @@ OCI mode currently requires Linux, rootless Podman, private regular non-symlink
 files at `${CODEX_HOME:-$HOME/.codex}/{auth.json,config.toml}` and
 `${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}/{hosts.yml,config.yml}`,
 and a current Codex profile preflight. The worker receives only those exact
-files, its worktree, and `SNOWCAT_MCP_TOKEN` by environment-variable name. Host
-mode remains the default and the interactive path for Claude and Copilot. See
+files, its worktree, `SNOWCAT_MCP_TOKEN`, and `GH_TOKEN` by environment-variable
+name. When the checked-in serve wrapper starts with an OCI image configured, it
+projects `GH_TOKEN` from the current `gh` keyring login unless the operator
+already supplied it. Host mode remains the default and the interactive path for Claude and Copilot. See
 the [rootless OCI worker contract](docs/specs/oci-workers.md) for the complete
 boundary.
 

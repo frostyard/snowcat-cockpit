@@ -118,3 +118,4 @@ its filesystem and process isolation.
 - Informed by:
   [Hive v4 contributor launcher](https://github.com/kubestellar/hive/blob/eeaaad4dd5eda9183b536c214735a4dbbbc77a0b/Justfile#L925-L1151),
   [official Codex CLI command reference](https://developers.openai.com/codex/cli/reference)
+- Refined by: [ADR-0006](0006-use-self-contained-git-directories-for-oci-workers.md)

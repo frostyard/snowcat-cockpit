@@ -67,8 +67,11 @@ HTTP operations:
 
 ## Rules
 
-1. Launch MUST create a unique branch and Git worktree beneath the configured
-   Cockpit state directory; it MUST NOT clone, fetch, pull, or mutate Snowcat.
+1. Launch MUST create a unique branch and isolated Git workspace beneath the
+   configured Cockpit state directory. `host` MUST use a linked worktree and
+   MUST NOT clone, fetch, or pull. `oci` MUST use the self-contained local
+   clone defined by the [rootless OCI contract](oci-workers.md), without a
+   network fetch or pull. Neither mode may mutate Snowcat during allocation.
 2. Launch MUST install the locked skills into `.agents/skills` and
    `.claude/skills` in the isolated worktree and hide only those Cockpit-owned
    paths from the worker's Git commands through process-local Git configuration.
@@ -91,7 +94,9 @@ HTTP operations:
 7. Stop MUST address one exact worker and MUST retain its workspace and record.
 8. Cleanup MUST be explicit, MUST refuse a running or dirty workspace, MUST
    remove only byte-matching Cockpit skill files, and MUST retain a `cleaned`
-   lifecycle record. It MUST NOT delete the worker branch.
+   lifecycle record. It MUST NOT delete the worker branch. Before deleting a
+   clean OCI checkout, it MUST import that checkout's exact worker branch into
+   the source repository.
 9. Failed allocation or launch MUST remain recorded and MUST NOT trigger
    automatic worktree or terminal deletion.
 10. A launch is local process creation, not evidence that Snowcat work was
@@ -121,7 +126,8 @@ HTTP operations:
 ## References
 
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
-  [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md)
+  [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md),
+  [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
 - Context: [Cockpit node](../design/node.md)
 - Built in: [Production roadmap, Phase 3](../plans/0002-production-roadmap.md#phase-3--launch-one-managed-worker)
 - Unattended boundary: [rootless OCI workers](oci-workers.md)

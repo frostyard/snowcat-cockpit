@@ -103,10 +103,12 @@ process-local configuration. It does not fetch or infer a remote default
 branch. Its lifecycle follows the [managed-worker contract](../specs/managed-workers.md).
 
 The first OCI adapter slice runs Codex once per container with a non-root user,
-a SHA-256-pinned local image, an isolated workspace, and exact Codex and GitHub
-configuration files copied from read-only mounts into tmpfs. It supports
-rootless Podman only. Claude, Copilot, and Docker fail closed before workspace
-allocation and remain later explicit compatibility slices.
+a SHA-256-pinned local image, a self-contained local Git clone, and exact Codex
+and GitHub configuration files copied from read-only mounts into tmpfs. The
+clone avoids exposing the source repository's common Git directory and copies
+objects without hardlinks or network access. It supports rootless Podman only.
+Claude, Copilot, and Docker fail closed before workspace allocation and remain
+later explicit compatibility slices.
 
 The projection and unattended-permission boundary is recorded in
 [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md) and made
@@ -183,4 +185,5 @@ Cockpit into a queue poller or treating a completed lease as a dead process.
 - Queue and batch contract: [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md)
 - OCI boundary: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
 - OCI contract: [rootless OCI workers](../specs/oci-workers.md)
+- OCI workspace boundary: [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
 - Built in: [production roadmap](../plans/0002-production-roadmap.md)

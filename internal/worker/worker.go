@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +51,7 @@ var (
 	commitRE     = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 	interfaceRE  = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	imageIDRE    = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._/:@-]*@)?sha256:[0-9a-f]{64}$`)
+	scpRemoteRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^[:space:]]+$`)
 )
 
 type LaunchRequest struct {
@@ -250,6 +252,17 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	if !commitRE.MatchString(baseCommit) {
 		return Record{}, fmt.Errorf("%w: Git returned an invalid base commit", ErrInvalid)
 	}
+	var remoteURL string
+	if request.Adapter == AdapterOCI {
+		output, err = manager.run(ctx, gitPath, source, nil, "remote", "get-url", "--push", "origin")
+		if err != nil {
+			return Record{}, fmt.Errorf("%w: OCI source requires an origin push URL", ErrInvalid)
+		}
+		remoteURL, err = projectGitHubRemote(strings.TrimSpace(string(output)), request.Repository)
+		if err != nil {
+			return Record{}, fmt.Errorf("%w: OCI source origin: %v", ErrInvalid, err)
+		}
+	}
 
 	workerID, err := newWorkerID(manager.random)
 	if err != nil {
@@ -263,7 +276,7 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 		Adapter: request.Adapter, Provider: request.Provider, Role: request.Role, Repository: request.Repository,
 		Source: source, Workspace: workspace, BaseRef: request.BaseRef,
 		BaseCommit: baseCommit, Branch: branch, Status: StatusAllocating,
-		Detail: "allocating isolated Git worktree", CreatedAt: now,
+		Detail: "allocating isolated Git workspace", CreatedAt: now,
 	}
 	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
 		return Record{}, fmt.Errorf("create worker workspace root: %w", err)
@@ -271,7 +284,17 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	if err := manager.write(record); err != nil {
 		return Record{}, err
 	}
-	if _, err := manager.run(ctx, gitPath, source, nil, "worktree", "add", "-b", branch, workspace, baseCommit); err != nil {
+	if request.Adapter == AdapterOCI {
+		if _, err := manager.run(ctx, gitPath, "", nil, "clone", "--local", "--no-hardlinks", "--no-checkout", source, workspace); err != nil {
+			return manager.fail(record, "self-contained Git workspace allocation failed", err)
+		}
+		if _, err := manager.run(ctx, gitPath, workspace, nil, "remote", "set-url", "origin", remoteURL); err != nil {
+			return manager.fail(record, "Git origin projection failed", err)
+		}
+		if _, err := manager.run(ctx, gitPath, workspace, nil, "checkout", "-b", branch, baseCommit); err != nil {
+			return manager.fail(record, "Git branch checkout failed", err)
+		}
+	} else if _, err := manager.run(ctx, gitPath, source, nil, "worktree", "add", "-b", branch, workspace, baseCommit); err != nil {
 		return manager.fail(record, "Git worktree allocation failed", err)
 	}
 	for _, skillRoot := range []string{
@@ -285,6 +308,11 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	excludePath, err := manager.writeExcludes(workerID)
 	if err != nil {
 		return manager.fail(record, "Git exclusion setup failed", err)
+	}
+	if request.Adapter == AdapterOCI {
+		if err := writeOCIExcludes(workspace); err != nil {
+			return manager.fail(record, "OCI Git exclusion setup failed", err)
+		}
 	}
 	environment := gitEnvironment(manager.environment(), excludePath)
 	prompt := BuildPrompt(workerID, request.Role, request.Repository)
@@ -401,7 +429,18 @@ func (manager *Manager) Cleanup(ctx context.Context, workerID string) (Record, e
 		if err := removeOwnedSkills(record.Workspace); err != nil {
 			return Record{}, err
 		}
-		if _, err := manager.run(ctx, gitPath, record.Source, nil, "worktree", "remove", record.Workspace); err != nil {
+		if record.Adapter == AdapterOCI {
+			if record.Workspace != manager.workspacePath(record.ID) {
+				return Record{}, fmt.Errorf("%w: OCI workspace path does not match worker identity", ErrConflict)
+			}
+			refspec := "refs/heads/" + record.Branch + ":refs/heads/" + record.Branch
+			if _, err := manager.run(ctx, gitPath, record.Source, nil, "fetch", "--no-tags", record.Workspace, refspec); err != nil {
+				return Record{}, fmt.Errorf("retain OCI worker branch in source: %w", err)
+			}
+			if err := os.RemoveAll(record.Workspace); err != nil {
+				return Record{}, fmt.Errorf("remove clean OCI workspace: %w", err)
+			}
+		} else if _, err := manager.run(ctx, gitPath, record.Source, nil, "worktree", "remove", record.Workspace); err != nil {
 			return Record{}, fmt.Errorf("remove clean Git worktree: %w", err)
 		}
 		_ = os.Remove(filepath.Dir(record.Workspace))
@@ -624,6 +663,9 @@ func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) 
 	if !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_TOKEN") {
 		return "", fmt.Errorf("%w: SNOWCAT_MCP_TOKEN is not present in the node environment", ErrNotReady)
 	}
+	if !hasNonemptyEnvironment(manager.environment(), "GH_TOKEN") {
+		return "", fmt.Errorf("%w: GH_TOKEN is not present in the node environment", ErrNotReady)
+	}
 	return podmanPath, nil
 }
 
@@ -647,6 +689,42 @@ func validatePrivateInput(path string) error {
 	return nil
 }
 
+func projectGitHubRemote(remote, repository string) (string, error) {
+	if remote == "" || strings.ContainsAny(remote, "\x00\n\r") || strings.HasPrefix(remote, "-") {
+		return "", errors.New("must be a safe non-empty URL")
+	}
+	if scpRemoteRE.MatchString(remote) {
+		userHost, path, _ := strings.Cut(remote, ":")
+		if userHost != "git@github.com" || strings.TrimSuffix(path, ".git") != repository {
+			return "", errors.New("must identify the selected repository on github.com")
+		}
+		return "https://github.com/" + repository + ".git", nil
+	}
+	parsed, err := url.Parse(remote)
+	if err != nil || parsed.Host == "" {
+		return "", errors.New("must be a GitHub HTTPS or SSH URL")
+	}
+	if !strings.EqualFold(parsed.Hostname(), "github.com") || parsed.RawQuery != "" || parsed.Fragment != "" || strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/"), ".git") != repository {
+		return "", errors.New("must identify the selected repository on github.com")
+	}
+	switch parsed.Scheme {
+	case "https":
+		if parsed.User != nil {
+			return "", errors.New("HTTPS URL must not contain user information")
+		}
+	case "ssh":
+		if parsed.User == nil || parsed.User.Username() != "git" {
+			return "", errors.New("SSH URL must use the git user")
+		}
+		if _, present := parsed.User.Password(); present {
+			return "", errors.New("SSH URL must not contain a password")
+		}
+	default:
+		return "", errors.New("must use HTTPS or SSH")
+	}
+	return "https://github.com/" + repository + ".git", nil
+}
+
 func hasNonemptyEnvironment(environment []string, name string) bool {
 	prefix := name + "="
 	for _, entry := range environment {
@@ -662,7 +740,8 @@ func ociHostEnvironment(environment []string) []string {
 		"PATH": true, "HOME": true, "USER": true, "LOGNAME": true,
 		"XDG_RUNTIME_DIR": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 		"XDG_CACHE_HOME": true, "DBUS_SESSION_BUS_ADDRESS": true,
-		"CONTAINER_HOST": true, "TMPDIR": true, "SNOWCAT_MCP_TOKEN": true,
+		"CONTAINER_HOST": true, "TMPDIR": true,
+		"SNOWCAT_MCP_TOKEN": true, "GH_TOKEN": true,
 	}
 	result := make([]string, 0, len(allowed))
 	for _, entry := range environment {
@@ -693,6 +772,7 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "hosts.yml"), "/run/cockpit/input/gh/hosts.yml"),
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "config.yml"), "/run/cockpit/input/gh/config.yml"),
 		"--env", "SNOWCAT_MCP_TOKEN",
+		"--env", "GH_TOKEN",
 		manager.oci.Image, prompt,
 	}
 }
@@ -785,6 +865,10 @@ func (manager *Manager) containerName(workerID string) string {
 	return "cockpit-" + workerID
 }
 
+func (manager *Manager) workspacePath(workerID string) string {
+	return filepath.Join(manager.stateDirectory, "workspaces", workerID, "checkout")
+}
+
 func shellJoin(arguments []string) string {
 	quoted := make([]string, len(arguments))
 	for index, argument := range arguments {
@@ -852,6 +936,19 @@ func (manager *Manager) writeExcludes(workerID string) (string, error) {
 		return "", fmt.Errorf("secure worker Git exclusions: %w", err)
 	}
 	return path, nil
+}
+
+func writeOCIExcludes(workspace string) error {
+	path := filepath.Join(workspace, ".git", "info", "exclude")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("open private Git exclusions: %w", err)
+	}
+	defer file.Close()
+	if _, err := io.WriteString(file, "\n/.agents/\n/.claude/\n"); err != nil {
+		return fmt.Errorf("write private Git exclusions: %w", err)
+	}
+	return nil
 }
 
 func (manager *Manager) write(record Record) error {

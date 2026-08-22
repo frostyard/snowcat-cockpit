@@ -39,6 +39,12 @@ tools.
 - run `dist/snowcat-cockpit serve`, unless a test supplies
   `SNOWCAT_COCKPIT_BIN`.
 
+When `SNOWCAT_COCKPIT_OCI_IMAGE` is set and `GH_TOKEN` is absent, the wrapper
+MUST invoke `gh auth token` and export its non-empty single-line result only to
+the node process. It MUST NOT print, persist, or place the token in argv. A
+missing GitHub CLI or invalid login MUST fail before the node starts. An
+operator-supplied `GH_TOKEN` takes precedence.
+
 ## HTTP interface
 
 | Method | Path | Result |

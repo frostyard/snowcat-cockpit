@@ -42,6 +42,13 @@ done <"$CREDENTIAL_FILE"
 [[ "$observer_token" =~ ^snowcat_[[:alnum:]_-]+$ ]] || die "observer credential file has an invalid SNOWCAT_OBSERVER_TOKEN"
 [[ -x "$COCKPIT_BIN" ]] || die "Cockpit binary is not executable: $COCKPIT_BIN (run make build)"
 
+if [[ -n "${SNOWCAT_COCKPIT_OCI_IMAGE:-}" && -z "${GH_TOKEN:-}" ]]; then
+  command -v gh >/dev/null 2>&1 || die "OCI workers require gh to project a GitHub token"
+  GH_TOKEN="$(gh auth token)" || die "OCI workers require a valid GitHub CLI login"
+  [[ -n "$GH_TOKEN" && "$GH_TOKEN" != *$'\n'* && "$GH_TOKEN" != *$'\r'* ]] || die "GitHub CLI returned an invalid token"
+  export GH_TOKEN
+fi
+
 export SNOWCAT_COCKPIT_MCP_URL="$MCP_URL"
 export SNOWCAT_COCKPIT_MCP_TOKEN="$observer_token"
 unset observer_token SNOWCAT_OBSERVER_TOKEN

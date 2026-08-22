@@ -22,6 +22,7 @@ type fakeRunner struct {
 	commands   []Command
 	workspace  string
 	baseCommit string
+	remoteURL  string
 }
 
 type loggingRunner struct {
@@ -145,6 +146,26 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 		return []byte(runner.source + "\n"), nil
 	case strings.Contains(arguments, "rev-parse\x00--verify"):
 		return []byte(runner.baseCommit + "\n"), nil
+	case strings.Contains(arguments, "remote\x00get-url\x00--push\x00origin"):
+		if runner.remoteURL == "" {
+			return nil, errors.New("missing origin")
+		}
+		return []byte(runner.remoteURL + "\n"), nil
+	case strings.Contains(arguments, "clone\x00--local\x00--no-hardlinks\x00--no-checkout"):
+		runner.workspace = command.Arguments[len(command.Arguments)-1]
+		if err := os.MkdirAll(filepath.Join(runner.workspace, ".git", "info"), 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(runner.workspace, ".git", "info", "exclude"), nil, 0o600); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	case strings.Contains(arguments, "remote\x00set-url\x00origin"):
+		return nil, nil
+	case strings.Contains(arguments, "checkout\x00-b"):
+		return nil, nil
+	case strings.Contains(arguments, "fetch\x00--no-tags"):
+		return nil, nil
 	case strings.Contains(arguments, "worktree\x00add"):
 		runner.workspace = command.Arguments[len(command.Arguments)-2]
 		if err := os.MkdirAll(runner.workspace, 0o700); err != nil {
@@ -310,7 +331,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("c", 40)}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("c", 40), remoteURL: "git@github.com:frostyard/firn.git"}
 	image := "sha256:" + strings.Repeat("d", 64)
 	manager, err := New(Config{
 		StateDirectory: filepath.Join(root, "state"), NodeID: "node-oci-test",
@@ -318,7 +339,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
 		Random:   bytes.NewReader([]byte("87654321")),
 		Environment: func() []string {
-			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "SECRET_SENTINEL=must-be-filtered"}
+			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=must-be-filtered"}
 		},
 		OCI: OCIConfig{Image: image, CodexHome: codexHome, GHConfigDir: ghConfig},
 	})
@@ -334,32 +355,44 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 	if record.Adapter != AdapterOCI || record.Status != StatusRunning {
 		t.Fatalf("record = %#v", record)
 	}
+	excludes, err := os.ReadFile(filepath.Join(record.Workspace, ".git", "info", "exclude"))
+	if err != nil || !bytes.Contains(excludes, []byte("/.agents/")) || !bytes.Contains(excludes, []byte("/.claude/")) {
+		t.Fatalf("OCI-private exclusions = %q, %v", excludes, err)
+	}
+	for _, command := range runner.commands {
+		if slices.Contains(command.Arguments, "worktree") {
+			t.Fatalf("OCI allocation used a linked worktree: %#v", command.Arguments)
+		}
+		if slices.Contains(command.Arguments, "set-url") && !slices.Contains(command.Arguments, "https://github.com/frostyard/firn.git") {
+			t.Fatalf("OCI origin was not projected to canonical HTTPS: %#v", command.Arguments)
+		}
+	}
 	launch := runner.commands[len(runner.commands)-1]
 	argv := strings.Join(launch.Arguments, "\n")
 	for _, required := range []string{
 		"/tools/podman", "--pull=never", "--read-only", "--read-only-tmpfs=false",
 		"--userns=keep-id:uid=1000,gid=1000", "--cap-drop=ALL",
 		"--security-opt=no-new-privileges", "--log-driver=none", "--env",
-		"SNOWCAT_MCP_TOKEN", image, record.Workspace, codexHome, ghConfig,
+		"SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, record.Workspace, codexHome, ghConfig,
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Podman launch is missing %q: %s", required, argv)
 		}
 	}
-	for _, forbidden := range []string{"never-in-argv", "SECRET_SENTINEL", "--privileged", "--network=host", "/run/user/1000/podman/podman.sock"} {
+	for _, forbidden := range []string{"never-in-argv", "github-never-in-argv", "SECRET_SENTINEL", "--privileged", "--network=host", "/run/user/1000/podman/podman.sock"} {
 		if strings.Contains(argv, forbidden) {
 			t.Errorf("Podman launch contains forbidden %q: %s", forbidden, argv)
 		}
 	}
 	joinedEnvironment := strings.Join(launch.Env, "\n")
-	if !strings.Contains(joinedEnvironment, "SNOWCAT_MCP_TOKEN=never-in-argv") || strings.Contains(joinedEnvironment, "SECRET_SENTINEL") {
+	if !strings.Contains(joinedEnvironment, "SNOWCAT_MCP_TOKEN=never-in-argv") || !strings.Contains(joinedEnvironment, "GH_TOKEN=github-never-in-argv") || strings.Contains(joinedEnvironment, "SECRET_SENTINEL") {
 		t.Fatalf("bounded OCI host environment = %q", joinedEnvironment)
 	}
 	stored, err := os.ReadFile(manager.recordPath(record.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(stored, []byte("never-in-argv")) || bytes.Contains(stored, []byte("fixture must never be read")) {
+	if bytes.Contains(stored, []byte("never-in-argv")) || bytes.Contains(stored, []byte("github-never-in-argv")) || bytes.Contains(stored, []byte("fixture must never be read")) {
 		t.Fatal("OCI worker record contains credential material")
 	}
 	for _, command := range runner.commands {
@@ -378,6 +411,24 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 	}
 	if !slices.Contains(stop.Arguments, manager.containerName(record.ID)) {
 		t.Fatalf("OCI stop did not address the exact container: %#v", stop.Arguments)
+	}
+	cleaned, err := manager.Cleanup(context.Background(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaned.Status != StatusCleaned {
+		t.Fatalf("cleaned OCI record = %#v", cleaned)
+	}
+	if _, err := os.Stat(record.Workspace); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleaned OCI workspace remains: %v", err)
+	}
+	refspec := "refs/heads/" + record.Branch + ":refs/heads/" + record.Branch
+	foundFetch := false
+	for _, command := range runner.commands {
+		foundFetch = foundFetch || slices.Contains(command.Arguments, "fetch") && slices.Contains(command.Arguments, refspec)
+	}
+	if !foundFetch {
+		t.Fatalf("OCI cleanup did not retain the exact branch: %#v", runner.commands)
 	}
 }
 
@@ -402,6 +453,33 @@ func TestOCIPrivateInputsRejectLoosePermissionsAndSymlinks(t *testing.T) {
 	}
 	if err := validatePrivateInput(link); err == nil {
 		t.Fatal("symlinked OCI input was accepted")
+	}
+}
+
+func TestOCIRemoteProjectsTheSelectedGitHubRepositoryToHTTPS(t *testing.T) {
+	t.Parallel()
+
+	for _, remote := range []string{
+		"https://token@github.com/frostyard/firn.git",
+		"https://user:secret@github.com/frostyard/firn.git",
+		"https://github.com/frostyard/other.git",
+		"git@gitlab.com:frostyard/firn.git",
+		"/home/test/source",
+		"file:///home/test/source",
+	} {
+		if projected, err := projectGitHubRemote(remote, "frostyard/firn"); err == nil {
+			t.Errorf("projectGitHubRemote(%q) = %q", remote, projected)
+		}
+	}
+	for _, remote := range []string{
+		"https://github.com/frostyard/firn.git",
+		"ssh://git@github.com/frostyard/firn.git",
+		"git@github.com:frostyard/firn.git",
+	} {
+		projected, err := projectGitHubRemote(remote, "frostyard/firn")
+		if err != nil || projected != "https://github.com/frostyard/firn.git" {
+			t.Errorf("projectGitHubRemote(%q) = %q, %v", remote, projected, err)
+		}
 	}
 }
 

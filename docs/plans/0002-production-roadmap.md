@@ -171,6 +171,23 @@ Cockpit reading or persisting it. Docker, Claude, Copilot, multi-architecture
 publication, and the host/container implementation-and-review trial remain
 before Phase 5 is complete.
 
+The first live implementation-and-review launch exposed a linked-worktree
+boundary defect before either worker claimed Snowcat work: the worktree's
+`.git` pointer named source-owned metadata outside `/workspace`. ADR-0006 keeps
+that metadata out of the container by giving OCI workers a self-contained local
+clone while preserving linked worktrees for host workers. The failed terminals
+and workspaces remain retained as required.
+
+The corrected launch proved self-contained checkouts and Snowcat lifecycle
+from the container. Codex reviewer `worker-0e074fea49d493a8` completed review
+attempt 4238. Codex implementer `worker-33386683422a140e` claimed attempt 4239
+and then correctly blocked without edits because the mounted GitHub CLI file
+held an expired fallback token while the host's valid token lived in its OS
+keyring. The secure serve wrapper now projects that token in memory as
+`GH_TOKEN`, and a no-claim container acceptance check proved both GitHub auth
+and Snowcat MCP. The implementation item still needs an operator requeue and
+one final OCI delivery run.
+
 ## Later / ideas
 
 - Desired concurrency and explicit automatic refill.
@@ -190,3 +207,4 @@ before Phase 5 is complete.
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md)
 - Queue observation: [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
 - OCI isolation: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
+- OCI workspace: [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)

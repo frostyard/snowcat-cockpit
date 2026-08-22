@@ -26,6 +26,7 @@ The node reads OCI configuration only from its starting environment:
 | `CODEX_HOME` | no | Host Codex configuration root; defaults to `$HOME/.codex` |
 | `GH_CONFIG_DIR` | no | Host GitHub CLI configuration root; defaults to `${XDG_CONFIG_HOME:-$HOME/.config}/gh` |
 | `SNOWCAT_MCP_TOKEN` | yes | Inherited by name; its value MUST NOT enter OCI argv, state, or logs |
+| `GH_TOKEN` | yes | Inherited by name; may be supplied by the operator or projected from the host GitHub CLI keyring by the secure serve wrapper |
 
 The first slice supports only `provider: codex`, `adapter: oci`, and the
 `podman` runtime. Claude, Copilot, and Docker OCI requests MUST fail before a
@@ -39,8 +40,8 @@ digests. Launch uses a pre-existing image with `--pull=never`.
 
 1. OCI readiness MUST be checked before allocating a branch or worktree:
    Podman exists, reports `rootless: true`, the pinned image exists locally,
-   `SNOWCAT_MCP_TOKEN` is present, and every required input file passes the
-   checks below.
+   `SNOWCAT_MCP_TOKEN` and `GH_TOKEN` are present, and every required input
+   file passes the checks below.
 2. Required input files are exact `auth.json` and `config.toml` beneath
    `CODEX_HOME`, plus exact `hosts.yml` and `config.yml` beneath
    `GH_CONFIG_DIR`. Each MUST be a regular, non-symlink file whose group and
@@ -51,14 +52,15 @@ digests. Launch uses a pre-existing image with `--pull=never`.
    `no-new-privileges`, a bounded PID limit, and no container log driver.
    It MUST NOT pass a runtime socket, privileged mode, added capability, or
    host networking.
-4. The only host filesystem mounts are the exact worker worktree read-write at
+4. The only host filesystem mounts are the exact worker workspace read-write at
    `/workspace` and the four exact input files read-only below
    `/run/cockpit/input`. The container home and `/tmp` MUST be bounded tmpfs
    mounts. The home tmpfs root MAY be mode `1777` for rootless-runtime
    portability; the non-root entrypoint MUST create the actual provider and
    GitHub configuration directories as mode `0700` beneath it.
-5. The runtime receives `--env SNOWCAT_MCP_TOKEN` with no value. No other
-   inherited credential environment name enters the first-slice container.
+5. The runtime receives `--env SNOWCAT_MCP_TOKEN` and `--env GH_TOKEN` with no
+   values. No other inherited credential environment name enters the
+   first-slice container.
 6. The image entrypoint MUST copy only the four declared input files into the
    tmpfs home, run `gh auth setup-git`, mark `/workspace` safe in the ephemeral
    Git config, and invoke `codex exec --dangerously-bypass-approvals-and-sandbox`
@@ -73,6 +75,17 @@ digests. Launch uses a pre-existing image with `--pull=never`.
 9. A failed readiness or container launch MUST return a bounded explanation
    without provider output, configuration content, environment values, or
    runtime error bodies.
+10. The OCI workspace MUST be a self-contained local clone whose `.git`
+    directory is inside `/workspace`. Allocation MUST use copied objects, not
+    hardlinks or alternates, and MUST perform no network operation. The source
+    push URL MUST identify the request's exact repository on `github.com` via
+    credential-free HTTPS or an ordinary GitHub SSH form. The clone's `origin`
+    MUST be the canonical credential-free HTTPS URL. Local paths, mismatched
+    repositories, unsupported hosts or schemes, HTTP user information, and URL
+    passwords MUST fail before clone allocation.
+11. Cockpit-owned skill exclusions MUST live in the clone's private
+    `.git/info/exclude`. Explicit cleanup MUST first import the exact worker
+    branch into the source repository; failure MUST retain the OCI workspace.
 
 ## Derived artifacts
 
@@ -86,6 +99,7 @@ digests. Launch uses a pre-existing image with `--pull=never`.
 ## References
 
 - Rationale: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
+- Workspace rationale: [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
 - Context: [Cockpit node](../design/node.md)
 - Base lifecycle: [managed workers](managed-workers.md)
 - Built in: [Production roadmap, Phase 5](../plans/0002-production-roadmap.md#phase-5--harden-container-delivery)
