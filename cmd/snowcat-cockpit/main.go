@@ -189,6 +189,7 @@ func runWorkerLaunch(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("worker launch", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	adapter := flags.String("adapter", worker.AdapterHost, "execution adapter: host or oci")
+	runtimeName := flags.String("runtime", "", "OCI runtime: podman or docker (defaults to podman)")
 	providerID := flags.String("provider", "", "provider to launch: codex, claude, or copilot")
 	role := flags.String("role", "", "worker role: discoverer, implementer, or reviewer")
 	repository := flags.String("repository", "", "Snowcat repository filter as owner/name")
@@ -210,7 +211,7 @@ func runWorkerLaunch(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	record, err := manager.Launch(context.Background(), worker.LaunchRequest{
-		Adapter: *adapter, Provider: *providerID, Role: *role, Repository: *repository, Source: *source, BaseRef: *baseRef,
+		Adapter: *adapter, Runtime: *runtimeName, Provider: *providerID, Role: *role, Repository: *repository, Source: *source, BaseRef: *baseRef,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "launch managed worker: %v\n", err)
@@ -274,7 +275,11 @@ func writeWorkerRecord(stdout, stderr io.Writer, record worker.Record, jsonOutpu
 		}
 		return 0
 	}
-	fmt.Fprintf(stdout, "%s %s (%s)\n", record.ID, record.Status, record.Adapter)
+	execution := record.Adapter
+	if record.Adapter == worker.AdapterOCI {
+		execution = fmt.Sprintf("%s, %s %s", record.Adapter, record.Runtime, record.RuntimePosture)
+	}
+	fmt.Fprintf(stdout, "%s %s (%s)\n", record.ID, record.Status, execution)
 	fmt.Fprintf(stdout, "Workspace: %s\nBranch: %s\n", record.Workspace, record.Branch)
 	return 0
 }
@@ -618,10 +623,16 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 				"claude":  os.Getenv("SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE"),
 				"copilot": os.Getenv("SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE"),
 			},
-			CodexHome:   defaultCodexHome(),
-			ClaudeHome:  defaultClaudeHome(),
-			CopilotHome: defaultCopilotHome(),
-			GHConfigDir: defaultGHConfigDir(),
+			DockerImages: map[string]string{
+				"codex":   os.Getenv("SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE"),
+				"claude":  os.Getenv("SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE"),
+				"copilot": os.Getenv("SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE"),
+			},
+			DockerAddHost: os.Getenv("SNOWCAT_COCKPIT_DOCKER_ADD_HOST"),
+			CodexHome:     defaultCodexHome(),
+			ClaudeHome:    defaultClaudeHome(),
+			CopilotHome:   defaultCopilotHome(),
+			GHConfigDir:   defaultGHConfigDir(),
 		},
 		Ready: func(providerID string) error {
 			snapshot, err := loadProfileSnapshot(skillsDirectory, stateDirectory)
@@ -744,7 +755,7 @@ func printUsage(output io.Writer) {
   snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
   snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
   snowcat-cockpit workers [--json] [--state-dir <directory>]
-  snowcat-cockpit worker launch [--adapter host|oci] --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+  snowcat-cockpit worker launch [--adapter host|oci] [--runtime podman|docker] --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
   snowcat-cockpit worker observe|attach|stop|cleanup [options] <worker-id>
   snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
   snowcat-cockpit version

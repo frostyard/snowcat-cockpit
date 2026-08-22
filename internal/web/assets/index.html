@@ -207,6 +207,7 @@
       <input id="launch-role" name="role" type="hidden">
       <div class="ph-form-grid">
         <label>Execution<select id="launch-adapter" name="adapter" required><option value="host">Host · interactive</option><option value="oci">OCI · unattended</option></select></label>
+        <label>OCI runtime<select id="launch-runtime" name="runtime" disabled><option value="podman">Podman · rootless required</option><option value="docker">Docker · explicit posture</option></select></label>
         <label>Provider<select id="launch-provider" name="provider" required></select></label>
         <label>Repository<input id="launch-repository" name="repository" type="text" placeholder="frostyard/firn" pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" required></label>
         <label>Base ref<input id="launch-base-ref" name="baseRef" type="text" value="HEAD" required></label>
@@ -229,6 +230,7 @@
       <p class="ph-form-intro">Cockpit takes one fresh queue snapshot, caps the batch to eligible work, then launches once. It does not refill the fleet.</p>
       <div class="ph-form-grid">
         <label>Execution<select id="fleet-adapter" required><option value="host">Host · interactive</option><option value="oci">OCI · unattended</option></select></label>
+        <label>OCI runtime<select id="fleet-runtime" disabled><option value="podman">Podman · rootless required</option><option value="docker">Docker · explicit posture</option></select></label>
         <label>Provider<select id="fleet-provider" required></select></label>
         <label>Workers<input id="fleet-count" type="number" min="1" max="12" value="3" required></label>
         <label>Repository<input id="fleet-repository" type="text" pattern="[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" required></label>

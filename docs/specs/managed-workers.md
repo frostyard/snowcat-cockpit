@@ -12,6 +12,7 @@ A launch request contains:
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
 | `adapter` | string | no | Exact `host` or `oci`; defaults to `host` |
+| `runtime` | string | no | With `oci`, exact `podman` or `docker`; defaults to `podman`. Forbidden with `host` |
 | `provider` | string | yes | Exact `codex`, `claude`, or `copilot`; its current profile is `ready` |
 | `role` | string | yes | Exact `discoverer`, `implementer`, or `reviewer` |
 | `repository` | string | yes | Snowcat `owner/name` slug |
@@ -26,6 +27,8 @@ The manager returns a non-secret record:
   "id": "worker-<hex>",
   "nodeId": "node-<hex>",
   "adapter": "host",
+  "runtime": "podman or docker when adapter is oci",
+  "runtimePosture": "rootless or rootful when adapter is oci",
   "provider": "claude",
   "model": "gpt-5.6-terra or omitted",
   "role": "implementer",

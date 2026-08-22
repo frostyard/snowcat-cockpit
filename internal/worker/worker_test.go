@@ -16,17 +16,18 @@ import (
 )
 
 type fakeRunner struct {
-	source     string
-	dead       bool
-	dirty      bool
-	session    bool
-	commands   []Command
-	workspace  string
-	baseCommit string
-	remoteURL  string
-	upstream   string
-	ahead      int
-	behind     int
+	source         string
+	dead           bool
+	dirty          bool
+	session        bool
+	commands       []Command
+	workspace      string
+	baseCommit     string
+	remoteURL      string
+	upstream       string
+	ahead          int
+	behind         int
+	dockerSecurity string
 }
 
 type loggingRunner struct {
@@ -185,9 +186,19 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 		return nil, nil
 	case strings.Contains(arguments, "info\x00--format\x00{{.Host.Security.Rootless}}"):
 		return []byte("true\n"), nil
+	case strings.Contains(arguments, "info\x00--format\x00{{.OSType}}\n{{json .SecurityOptions}}"):
+		security := runner.dockerSecurity
+		if security == "" {
+			security = `["name=seccomp,profile=builtin"]`
+		}
+		return []byte("linux\n" + security + "\n"), nil
 	case strings.Contains(arguments, "image\x00exists"):
 		return nil, nil
+	case strings.Contains(arguments, "image\x00inspect"):
+		return []byte("[]\n"), nil
 	case strings.Contains(arguments, "stop\x00--ignore"):
+		return nil, nil
+	case strings.Contains(arguments, "stop\x00--time"):
 		return nil, nil
 	case strings.Contains(arguments, "new-session"):
 		runner.session = true
@@ -514,6 +525,86 @@ func TestCopilotOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 	}
 }
 
+func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codexHome := filepath.Join(root, "codex")
+	ghConfig := filepath.Join(root, "gh")
+	for _, path := range []string{
+		filepath.Join(codexHome, "auth.json"), filepath.Join(codexHome, "config.toml"),
+		filepath.Join(ghConfig, "hosts.yml"), filepath.Join(ghConfig, "config.yml"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture must never be read"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("e", 40), remoteURL: "git@github.com:frostyard/firn.git"}
+	image := "sha256:" + strings.Repeat("9", 64)
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-docker-oci-test",
+		Runner: runner, Ready: func(string) error { return nil },
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:   bytes.NewReader([]byte("docker!!")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "HOME=/home/test", "SNOWCAT_MCP_TOKEN=never-in-argv", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=filtered"}
+		},
+		OCI: OCIConfig{
+			DockerImages: map[string]string{"codex": image}, DockerAddHost: "snowcat.goat-snake.ts.net:100.108.168.44", CodexHome: codexHome, GHConfigDir: ghConfig,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Adapter: AdapterOCI, Runtime: RuntimeDocker, Provider: "codex", Role: "reviewer", Repository: "frostyard/firn", Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Runtime != RuntimeDocker || record.RuntimePosture != PostureRootful || record.Model != OCIModelReview || record.Status != StatusRunning {
+		t.Fatalf("record = %#v", record)
+	}
+	launch := runner.commands[len(runner.commands)-1]
+	argv := strings.Join(launch.Arguments, "\n")
+	for _, required := range []string{
+		"/tools/docker", "--pull=never", "--read-only", "--user=1000:1000",
+		"--cap-drop=ALL", "--security-opt=no-new-privileges=true", "--log-driver=none",
+		"--add-host", "snowcat.goat-snake.ts.net:100.108.168.44", "readonly", "SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, record.Workspace,
+	} {
+		if !strings.Contains(argv, required) {
+			t.Errorf("Docker launch is missing %q: %s", required, argv)
+		}
+	}
+	for _, forbidden := range []string{
+		"--read-only-tmpfs=false", "--userns=keep-id", "rw=true",
+		"never-in-argv", "github-never-in-argv", "SECRET_SENTINEL", "--privileged", "--network=host",
+	} {
+		if strings.Contains(argv, forbidden) {
+			t.Errorf("Docker launch contains forbidden %q: %s", forbidden, argv)
+		}
+	}
+	if _, err := manager.Stop(context.Background(), record.ID); err != nil {
+		t.Fatal(err)
+	}
+	foundStop := false
+	for _, command := range runner.commands {
+		if strings.HasSuffix(command.Name, "/docker") && slices.Contains(command.Arguments, "stop") {
+			foundStop = slices.Contains(command.Arguments, manager.containerName(record.ID))
+		}
+	}
+	if !foundStop {
+		t.Fatalf("Docker stop did not address the exact container: %#v", runner.commands)
+	}
+}
+
 func TestClaudeOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 	t.Parallel()
 
@@ -717,6 +808,39 @@ func TestOCIReadinessFailsBeforeAllocatingAWorkspace(t *testing.T) {
 	}
 }
 
+func TestInvalidDockerHostMappingFailsBeforeAllocatingAWorkspace(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("e", 40)}
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-docker-host-not-ready",
+		Runner: runner, Ready: func(string) error { return nil },
+		LookPath:    func(name string) (string, error) { return "/tools/" + name, nil },
+		Environment: func() []string { return []string{"PATH=/tools"} },
+		OCI: OCIConfig{
+			DockerImages:  map[string]string{"codex": "sha256:" + strings.Repeat("8", 64)},
+			DockerAddHost: "snowcat.goat-snake.ts.net:not-an-ip",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Launch(context.Background(), LaunchRequest{
+		Adapter: AdapterOCI, Runtime: RuntimeDocker, Provider: "codex", Role: "reviewer", Repository: "frostyard/firn", Source: source,
+	})
+	if !errors.Is(err, ErrNotReady) || !strings.Contains(err.Error(), "Docker host mapping") {
+		t.Fatalf("Docker host-mapping launch error = %v", err)
+	}
+	if runner.workspace != "" {
+		t.Fatalf("Docker host-mapping readiness failure allocated workspace %q", runner.workspace)
+	}
+}
+
 func TestStopRetainsWorkspaceAndAttachUsesExactSocket(t *testing.T) {
 	t.Parallel()
 
@@ -754,6 +878,47 @@ func TestStopRetainsWorkspaceAndAttachUsesExactSocket(t *testing.T) {
 	}
 	if _, err := os.Stat(record.Workspace); err != nil {
 		t.Fatalf("stop removed workspace: %v", err)
+	}
+}
+
+func TestReadLegacyOCIRecordDefaultsToRootlessPodman(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manager, err := New(Config{StateDirectory: filepath.Join(root, "state"), NodeID: "node-legacy-record-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerID := "worker-0123456789abcdef"
+	if err := os.MkdirAll(manager.recordsDirectory(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "version": 1,
+  "id": "worker-0123456789abcdef",
+  "nodeId": "node-legacy-record-test",
+  "adapter": "oci",
+  "provider": "codex",
+  "role": "reviewer",
+  "repository": "frostyard/firn",
+  "source": "/tmp/source",
+  "workspace": "/tmp/workspace",
+  "baseRef": "main",
+  "baseCommit": "0123456789012345678901234567890123456789",
+  "branch": "cockpit/worker-0123456789abcdef",
+  "status": "stopped",
+  "detail": "legacy fixture",
+  "createdAt": "2026-08-21T12:00:00Z"
+}`
+	if err := os.WriteFile(manager.recordPath(workerID), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Get(context.Background(), workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Runtime != RuntimePodman || record.RuntimePosture != PostureRootless {
+		t.Fatalf("legacy OCI record = %#v", record)
 	}
 }
 

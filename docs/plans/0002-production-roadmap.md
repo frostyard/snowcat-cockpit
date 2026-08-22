@@ -161,14 +161,15 @@ and process termination remain intentionally outside its boundary.
   state or back into the host provider configuration.
 
 The executable slice is now specified and implemented for Codex, Claude, and
-Copilot on rootless Podman. The node accepts an explicit `host` or `oci` adapter for one
-worker or a bounded fleet, validates the pinned local image and exact private
-input-file metadata before workspace allocation, and launches a one-shot Codex
-process in a read-only, non-root container with bounded tmpfs and no runtime
-socket, host network, capabilities, or container logs. The image entrypoint
-copies provider and GitHub configuration into the ephemeral home without
-Cockpit reading or persisting it. Docker and multi-architecture publication
-remain before Phase 5 is complete.
+Copilot on rootless Podman and explicitly selected Docker. The node accepts an
+explicit `host` or `oci` adapter for one worker or a bounded fleet, and an OCI
+request names its runtime. It validates the pinned local image and exact private
+input-file metadata before workspace allocation and launches a one-shot process
+in a read-only, non-root container with bounded tmpfs and no runtime socket,
+host network, capabilities, or container logs. The image entrypoint copies
+provider and GitHub configuration into the ephemeral home without Cockpit
+reading or persisting it. Multi-architecture publication remains before Phase 5
+is complete.
 
 The first live implementation-and-review launch exposed a linked-worktree
 boundary defect before either worker claimed Snowcat work: the worktree's
@@ -321,6 +322,24 @@ implementation/Copilot review loop. The preflight also showed that configured
 MCP server names are provider-local: this Copilot installation calls the server
 `snowcat-mcp`, while Claude calls it `snowcat`; the explicit preflight must use
 the provider's configured name.
+
+The Docker compatibility trial built the same three pinned worker images in
+Docker's separate image store and recorded the local daemon honestly as
+`rootful`. The first exact-image network probe found that Docker bridge DNS
+could resolve public provider endpoints but not the tailnet Snowcat name. A
+trial with Tailscale's resolver fixed Snowcat but broke public DNS, so Cockpit
+does not replace Docker's resolver or use host networking. The Snowcat wrapper
+instead resolves its fixed MCP hostname on the host and supplies one validated
+`hostname:IPv4` mapping to Docker. With that narrow mapping, the hardened Claude
+image reached both Snowcat and Anthropic, proved the locked skills and
+`list_work`, and exited without a claim or repository change.
+
+Managed Docker reviewer `worker-2389dff5cd0bd229` then launched from immutable
+Clix base `c9942bfa0c35`, recorded `docker rootful`, found no eligible
+`pr-review`, claimed nothing, and exited zero. Cockpit's explicit stop accepted
+Docker's already-removed `--rm` container and retained the terminal and
+self-contained workspace. A real Docker delivery pair and multi-architecture
+publication remain trial evidence needed before Phase 5 closes.
 
 ## Later / ideas
 

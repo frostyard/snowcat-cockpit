@@ -40,7 +40,7 @@ func TestLaunchUsesOneSnapshotAndCapsTheFleetToEligibleWork(t *testing.T) {
 	observer := &fakeObserver{snapshot: queueview.Snapshot{Counts: map[queueview.Role]int{queueview.RoleImplementer: 2}}}
 	launcher := &fakeLauncher{}
 	result, err := New(observer, launcher).Launch(context.Background(), Request{
-		Adapter: worker.AdapterOCI, Provider: "codex", Role: "implementer", Repository: "frostyard/firn", Source: "/repo", BaseRef: "main", Count: 5,
+		Adapter: worker.AdapterOCI, Runtime: worker.RuntimeDocker, Provider: "codex", Role: "implementer", Repository: "frostyard/firn", Source: "/repo", BaseRef: "main", Count: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +53,9 @@ func TestLaunchUsesOneSnapshotAndCapsTheFleetToEligibleWork(t *testing.T) {
 	}
 	if result.Adapter != worker.AdapterOCI || launcher.requests[0].Adapter != worker.AdapterOCI || launcher.requests[1].Adapter != worker.AdapterOCI {
 		t.Fatalf("OCI adapter was not preserved: result = %#v, requests = %#v", result, launcher.requests)
+	}
+	if result.Runtime != worker.RuntimeDocker || launcher.requests[0].Runtime != worker.RuntimeDocker || launcher.requests[1].Runtime != worker.RuntimeDocker {
+		t.Fatalf("Docker runtime was not preserved: result = %#v, requests = %#v", result, launcher.requests)
 	}
 }
 
@@ -83,6 +86,8 @@ func TestLaunchValidatesBeforeObservation(t *testing.T) {
 		{Provider: "codex", Role: "anything", Repository: "frostyard/firn", Source: "/repo", Count: 1},
 		{Provider: "", Role: "reviewer", Repository: "frostyard/firn", Source: "/repo", Count: 1},
 		{Adapter: "automatic", Provider: "codex", Role: "reviewer", Repository: "frostyard/firn", Source: "/repo", Count: 1},
+		{Adapter: worker.AdapterHost, Runtime: worker.RuntimeDocker, Provider: "codex", Role: "reviewer", Repository: "frostyard/firn", Source: "/repo", Count: 1},
+		{Adapter: worker.AdapterOCI, Runtime: "automatic", Provider: "codex", Role: "reviewer", Repository: "frostyard/firn", Source: "/repo", Count: 1},
 	} {
 		if _, err := controller.Launch(context.Background(), request); !errors.Is(err, ErrInvalid) {
 			t.Errorf("Launch(%#v) error = %v", request, err)

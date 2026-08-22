@@ -27,13 +27,17 @@ import (
 )
 
 const (
-	AdapterHost    = "host"
-	AdapterOCI     = "oci"
-	OCIModelWork   = "gpt-5.6-sol"
-	OCIModelReview = "gpt-5.6-terra"
-	OCIModelAuto   = "auto"
-	OCIModelSonnet = "sonnet"
-	OCIModelOpus   = "opus"
+	AdapterHost     = "host"
+	AdapterOCI      = "oci"
+	RuntimePodman   = "podman"
+	RuntimeDocker   = "docker"
+	PostureRootless = "rootless"
+	PostureRootful  = "rootful"
+	OCIModelWork    = "gpt-5.6-sol"
+	OCIModelReview  = "gpt-5.6-terra"
+	OCIModelAuto    = "auto"
+	OCIModelSonnet  = "sonnet"
+	OCIModelOpus    = "opus"
 
 	StatusAllocating = "allocating"
 	StatusRunning    = "running"
@@ -57,10 +61,12 @@ var (
 	interfaceRE  = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	imageIDRE    = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._/:@-]*@)?sha256:[0-9a-f]{64}$`)
 	scpRemoteRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^[:space:]]+$`)
+	dockerHostRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$`)
 )
 
 type LaunchRequest struct {
 	Adapter    string `json:"adapter,omitempty"`
+	Runtime    string `json:"runtime,omitempty"`
 	Provider   string `json:"provider"`
 	Role       string `json:"role"`
 	Repository string `json:"repository"`
@@ -69,25 +75,27 @@ type LaunchRequest struct {
 }
 
 type Record struct {
-	Version    int        `json:"version"`
-	ID         string     `json:"id"`
-	NodeID     string     `json:"nodeId"`
-	Adapter    string     `json:"adapter"`
-	Provider   string     `json:"provider"`
-	Model      string     `json:"model,omitempty"`
-	Role       string     `json:"role"`
-	Repository string     `json:"repository"`
-	Source     string     `json:"source"`
-	Workspace  string     `json:"workspace"`
-	BaseRef    string     `json:"baseRef"`
-	BaseCommit string     `json:"baseCommit"`
-	Branch     string     `json:"branch"`
-	Status     string     `json:"status"`
-	Detail     string     `json:"detail"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	StartedAt  *time.Time `json:"startedAt,omitempty"`
-	StoppedAt  *time.Time `json:"stoppedAt,omitempty"`
-	CleanedAt  *time.Time `json:"cleanedAt,omitempty"`
+	Version        int        `json:"version"`
+	ID             string     `json:"id"`
+	NodeID         string     `json:"nodeId"`
+	Adapter        string     `json:"adapter"`
+	Runtime        string     `json:"runtime,omitempty"`
+	RuntimePosture string     `json:"runtimePosture,omitempty"`
+	Provider       string     `json:"provider"`
+	Model          string     `json:"model,omitempty"`
+	Role           string     `json:"role"`
+	Repository     string     `json:"repository"`
+	Source         string     `json:"source"`
+	Workspace      string     `json:"workspace"`
+	BaseRef        string     `json:"baseRef"`
+	BaseCommit     string     `json:"baseCommit"`
+	Branch         string     `json:"branch"`
+	Status         string     `json:"status"`
+	Detail         string     `json:"detail"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	StoppedAt      *time.Time `json:"stoppedAt,omitempty"`
+	CleanedAt      *time.Time `json:"cleanedAt,omitempty"`
 }
 
 type BaseInspection struct {
@@ -150,11 +158,19 @@ type Config struct {
 }
 
 type OCIConfig struct {
-	Images      map[string]string
-	CodexHome   string
-	ClaudeHome  string
-	CopilotHome string
-	GHConfigDir string
+	Images        map[string]string
+	DockerImages  map[string]string
+	DockerAddHost string
+	CodexHome     string
+	ClaudeHome    string
+	CopilotHome   string
+	GHConfigDir   string
+}
+
+type ociRuntimeSelection struct {
+	Path    string
+	Image   string
+	Posture string
 }
 
 type Manager struct {
@@ -238,14 +254,14 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 		return Record{}, fmt.Errorf("%w: tmux is not available", ErrNotReady)
 	}
 	var providerPath string
-	var runtimePath string
+	var runtimeSelection ociRuntimeSelection
 	if request.Adapter == AdapterHost {
 		providerPath, err = manager.lookPath(request.Provider)
 		if err != nil {
 			return Record{}, fmt.Errorf("%w: %s is not available", ErrNotReady, request.Provider)
 		}
 	} else {
-		runtimePath, err = manager.validateOCI(ctx, request)
+		runtimeSelection, err = manager.validateOCI(ctx, request)
 		if err != nil {
 			return Record{}, err
 		}
@@ -283,7 +299,8 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	now := manager.now().UTC()
 	record := Record{
 		Version: recordVersion, ID: workerID, NodeID: manager.nodeID,
-		Adapter: request.Adapter, Provider: request.Provider, Model: model, Role: request.Role, Repository: request.Repository,
+		Adapter: request.Adapter, Runtime: request.Runtime, RuntimePosture: runtimeSelection.Posture,
+		Provider: request.Provider, Model: model, Role: request.Role, Repository: request.Repository,
 		Source: source, Workspace: workspace, BaseRef: request.BaseRef,
 		BaseCommit: baseCommit, Branch: branch, Status: StatusAllocating,
 		Detail: "allocating isolated Git workspace", CreatedAt: now,
@@ -328,7 +345,7 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	prompt := BuildPrompt(workerID, request.Role, request.Repository)
 	launchCommand := []string{providerPath, prompt}
 	if request.Adapter == AdapterOCI {
-		launchCommand = append([]string{runtimePath}, manager.ociArguments(record, prompt)...)
+		launchCommand = append([]string{runtimeSelection.Path}, manager.ociArguments(record, runtimeSelection.Image, prompt)...)
 		environment = ociHostEnvironment(environment)
 	} else if request.Provider == "copilot" {
 		launchCommand = []string{providerPath, "-i", prompt}
@@ -339,6 +356,9 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	startedAt := manager.now().UTC()
 	record.Status = StatusRunning
 	record.Detail = request.Adapter + " provider running; terminal and workspace retained"
+	if request.Adapter == AdapterOCI {
+		record.Detail = fmt.Sprintf("oci %s (%s) provider running; terminal and workspace retained", request.Runtime, runtimeSelection.Posture)
+	}
 	record.StartedAt = &startedAt
 	if err := manager.write(record); err != nil {
 		return record, err
@@ -643,12 +663,21 @@ func (manager *Manager) stopConsoleLocked(workerID string) {
 func (manager *Manager) stopTerminalLocked(ctx context.Context, record Record) error {
 	manager.stopConsoleLocked(record.ID)
 	if record.Adapter == AdapterOCI {
-		podmanPath, err := manager.lookPath("podman")
-		if err != nil {
-			return fmt.Errorf("stop OCI worker: rootless Podman is unavailable: %w", err)
+		runtimeName := record.Runtime
+		if runtimeName == "" {
+			runtimeName = RuntimePodman
 		}
-		if _, err := manager.run(ctx, podmanPath, "", ociHostEnvironment(manager.environment()), "stop", "--ignore", "--time", "10", manager.containerName(record.ID)); err != nil {
-			return fmt.Errorf("stop OCI worker container: %w", err)
+		runtimePath, err := manager.lookPath(runtimeName)
+		if err != nil {
+			return fmt.Errorf("stop OCI worker: %s is unavailable: %w", runtimeName, err)
+		}
+		arguments := []string{"stop", "--time", "10", manager.containerName(record.ID)}
+		if runtimeName == RuntimePodman {
+			arguments = []string{"stop", "--ignore", "--time", "10", manager.containerName(record.ID)}
+		}
+		output, stopErr := manager.run(ctx, runtimePath, "", ociHostEnvironment(manager.environment()), arguments...)
+		if stopErr != nil && !(runtimeName == RuntimeDocker && strings.Contains(strings.ToLower(string(output)), "no such container")) {
+			return fmt.Errorf("stop OCI worker container: %w", stopErr)
 		}
 	}
 	if tmuxPath, err := manager.lookPath("tmux"); err == nil && manager.tmuxExists(ctx, tmuxPath, record) {
@@ -691,11 +720,20 @@ func validateRequest(request *LaunchRequest) error {
 	if request.Adapter == "" {
 		request.Adapter = AdapterHost
 	}
+	if request.Adapter == AdapterOCI && request.Runtime == "" {
+		request.Runtime = RuntimePodman
+	}
 	if request.BaseRef == "" {
 		request.BaseRef = "HEAD"
 	}
 	if request.Adapter != AdapterHost && request.Adapter != AdapterOCI {
 		return fmt.Errorf("%w: adapter must be host or oci", ErrInvalid)
+	}
+	if request.Adapter == AdapterHost && request.Runtime != "" {
+		return fmt.Errorf("%w: runtime is valid only with the oci adapter", ErrInvalid)
+	}
+	if request.Adapter == AdapterOCI && request.Runtime != RuntimePodman && request.Runtime != RuntimeDocker {
+		return fmt.Errorf("%w: OCI runtime must be podman or docker", ErrInvalid)
 	}
 	if request.Provider != "codex" && request.Provider != "claude" && request.Provider != "copilot" {
 		return fmt.Errorf("%w: unsupported provider", ErrInvalid)
@@ -709,28 +747,56 @@ func validateRequest(request *LaunchRequest) error {
 	return validateBaseInput(request.Source, request.BaseRef)
 }
 
-func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) (string, error) {
+func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) (ociRuntimeSelection, error) {
 	if request.Provider != "codex" && request.Provider != "claude" && request.Provider != "copilot" {
-		return "", fmt.Errorf("%w: OCI supports only codex, claude, and copilot", ErrNotReady)
+		return ociRuntimeSelection{}, fmt.Errorf("%w: OCI supports only codex, claude, and copilot", ErrNotReady)
 	}
 	if runtime.GOOS != "linux" {
-		return "", fmt.Errorf("%w: the rootless Podman adapter requires Linux", ErrNotReady)
+		return ociRuntimeSelection{}, fmt.Errorf("%w: the OCI adapter requires Linux containers", ErrNotReady)
 	}
 	image := manager.oci.Images[request.Provider]
-	if !imageIDRE.MatchString(image) {
-		return "", fmt.Errorf("%w: the %s OCI image must be pinned by SHA-256", ErrNotReady, request.Provider)
+	if request.Runtime == RuntimeDocker {
+		image = manager.oci.DockerImages[request.Provider]
 	}
-	podmanPath, err := manager.lookPath("podman")
+	if !imageIDRE.MatchString(image) {
+		return ociRuntimeSelection{}, fmt.Errorf("%w: the %s %s image must be pinned by SHA-256", ErrNotReady, request.Runtime, request.Provider)
+	}
+	runtimePath, err := manager.lookPath(request.Runtime)
 	if err != nil {
-		return "", fmt.Errorf("%w: rootless Podman is not available", ErrNotReady)
+		return ociRuntimeSelection{}, fmt.Errorf("%w: %s is not available", ErrNotReady, request.Runtime)
 	}
 	hostEnvironment := ociHostEnvironment(manager.environment())
-	output, err := manager.run(ctx, podmanPath, "", hostEnvironment, "info", "--format", "{{.Host.Security.Rootless}}")
-	if err != nil || strings.TrimSpace(string(output)) != "true" {
-		return "", fmt.Errorf("%w: Podman is not structurally rootless", ErrNotReady)
-	}
-	if _, err := manager.run(ctx, podmanPath, "", hostEnvironment, "image", "exists", image); err != nil {
-		return "", fmt.Errorf("%w: pinned OCI worker image is not available locally", ErrNotReady)
+	selection := ociRuntimeSelection{Path: runtimePath, Image: image}
+	if request.Runtime == RuntimePodman {
+		output, infoErr := manager.run(ctx, runtimePath, "", hostEnvironment, "info", "--format", "{{.Host.Security.Rootless}}")
+		if infoErr != nil || strings.TrimSpace(string(output)) != "true" {
+			return ociRuntimeSelection{}, fmt.Errorf("%w: Podman is not structurally rootless", ErrNotReady)
+		}
+		if _, imageErr := manager.run(ctx, runtimePath, "", hostEnvironment, "image", "exists", image); imageErr != nil {
+			return ociRuntimeSelection{}, fmt.Errorf("%w: pinned Podman worker image is not available locally", ErrNotReady)
+		}
+		selection.Posture = PostureRootless
+	} else {
+		if manager.oci.DockerAddHost != "" {
+			if err := validateDockerAddHost(manager.oci.DockerAddHost); err != nil {
+				return ociRuntimeSelection{}, fmt.Errorf("%w: Docker host mapping: %v", ErrNotReady, err)
+			}
+		}
+		output, infoErr := manager.run(ctx, runtimePath, "", hostEnvironment, "info", "--format", "{{.OSType}}\n{{json .SecurityOptions}}")
+		if infoErr != nil {
+			return ociRuntimeSelection{}, fmt.Errorf("%w: Docker daemon is unavailable", ErrNotReady)
+		}
+		lines := strings.SplitN(strings.TrimSpace(string(output)), "\n", 2)
+		if len(lines) == 0 || strings.TrimSpace(lines[0]) != "linux" {
+			return ociRuntimeSelection{}, fmt.Errorf("%w: Docker is not serving Linux containers", ErrNotReady)
+		}
+		selection.Posture = PostureRootful
+		if len(lines) == 2 && strings.Contains(strings.ToLower(lines[1]), "rootless") {
+			selection.Posture = PostureRootless
+		}
+		if _, imageErr := manager.run(ctx, runtimePath, "", hostEnvironment, "image", "inspect", image); imageErr != nil {
+			return ociRuntimeSelection{}, fmt.Errorf("%w: pinned Docker worker image is not available locally", ErrNotReady)
+		}
 	}
 	inputs := []string{
 		filepath.Join(manager.oci.GHConfigDir, "hosts.yml"),
@@ -748,19 +814,31 @@ func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) 
 	}
 	for _, input := range inputs {
 		if err := validatePrivateInput(input); err != nil {
-			return "", fmt.Errorf("%w: OCI input %s is unavailable: %v", ErrNotReady, filepath.Base(input), err)
+			return ociRuntimeSelection{}, fmt.Errorf("%w: OCI input %s is unavailable: %v", ErrNotReady, filepath.Base(input), err)
 		}
 	}
 	if !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_TOKEN") {
-		return "", fmt.Errorf("%w: SNOWCAT_MCP_TOKEN is not present in the node environment", ErrNotReady)
+		return ociRuntimeSelection{}, fmt.Errorf("%w: SNOWCAT_MCP_TOKEN is not present in the node environment", ErrNotReady)
 	}
 	if !hasNonemptyEnvironment(manager.environment(), "GH_TOKEN") {
-		return "", fmt.Errorf("%w: GH_TOKEN is not present in the node environment", ErrNotReady)
+		return ociRuntimeSelection{}, fmt.Errorf("%w: GH_TOKEN is not present in the node environment", ErrNotReady)
 	}
 	if request.Provider == "claude" && !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_URL") {
-		return "", fmt.Errorf("%w: SNOWCAT_MCP_URL is not present in the node environment", ErrNotReady)
+		return ociRuntimeSelection{}, fmt.Errorf("%w: SNOWCAT_MCP_URL is not present in the node environment", ErrNotReady)
 	}
-	return podmanPath, nil
+	return selection, nil
+}
+
+func validateDockerAddHost(value string) error {
+	host, address, found := strings.Cut(value, ":")
+	if !found || len(host) > 253 || strings.Contains(address, ":") || !dockerHostRE.MatchString(host) || strings.Contains(host, "..") {
+		return errors.New("must be one hostname and IPv4 address")
+	}
+	ip := net.ParseIP(address)
+	if ip == nil || ip.To4() == nil {
+		return errors.New("must be one hostname and IPv4 address")
+	}
+	return nil
 }
 
 func validatePrivateInput(path string) error {
@@ -847,24 +925,40 @@ func ociHostEnvironment(environment []string) []string {
 	return result
 }
 
-func (manager *Manager) ociArguments(record Record, prompt string) []string {
+func (manager *Manager) ociArguments(record Record, image, prompt string) []string {
 	inputMount := func(source, destination string) string {
-		return "type=bind,source=" + source + ",destination=" + destination + ",ro=true"
+		return "type=bind,source=" + source + ",destination=" + destination + ",readonly"
 	}
 	arguments := []string{
 		"run", "--rm", "--pull=never", "--tty",
 		"--name", manager.containerName(record.ID),
-		"--read-only", "--read-only-tmpfs=false",
-		"--userns=keep-id:uid=1000,gid=1000", "--user=1000:1000",
-		"--cap-drop=ALL", "--security-opt=no-new-privileges",
+		"--read-only",
+	}
+	if record.Runtime == RuntimePodman {
+		arguments = append(arguments,
+			"--read-only-tmpfs=false",
+			"--userns=keep-id:uid=1000,gid=1000",
+			"--user=1000:1000",
+			"--cap-drop=ALL", "--security-opt=no-new-privileges",
+		)
+	} else {
+		arguments = append(arguments,
+			"--user=1000:1000",
+			"--cap-drop=ALL", "--security-opt=no-new-privileges=true",
+		)
+		if manager.oci.DockerAddHost != "" {
+			arguments = append(arguments, "--add-host", manager.oci.DockerAddHost)
+		}
+	}
+	arguments = append(arguments,
 		"--pids-limit=512", "--log-driver=none",
 		"--tmpfs=/home/cockpit:rw,size=2g,mode=1777",
 		"--tmpfs=/tmp:rw,size=2g,mode=1777",
 		"--tmpfs=/var/lib:rw,size=512m,mode=1777",
-		"--mount", "type=bind,source=" + record.Workspace + ",destination=/workspace,rw=true",
+		"--mount", "type=bind,source="+record.Workspace+",destination=/workspace",
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "hosts.yml"), "/run/cockpit/input/gh/hosts.yml"),
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "config.yml"), "/run/cockpit/input/gh/config.yml"),
-	}
+	)
 	if record.Provider == "codex" {
 		arguments = append(arguments,
 			"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "auth.json"), "/run/cockpit/input/codex/auth.json"),
@@ -886,7 +980,7 @@ func (manager *Manager) ociArguments(record Record, prompt string) []string {
 	if record.Provider == "claude" {
 		arguments = append(arguments, "--env", "SNOWCAT_MCP_URL")
 	}
-	return append(arguments, manager.oci.Images[record.Provider], prompt, record.Model)
+	return append(arguments, image, prompt, record.Model)
 }
 
 func ociModel(provider, role string) string {
@@ -1136,6 +1230,10 @@ func (manager *Manager) read(workerID string) (Record, error) {
 	if record.Adapter == "" {
 		record.Adapter = AdapterHost
 	}
+	if record.Adapter == AdapterOCI && record.Runtime == "" {
+		record.Runtime = RuntimePodman
+		record.RuntimePosture = PostureRootless
+	}
 	if err := validateRecord(record); err != nil {
 		return Record{}, err
 	}
@@ -1171,6 +1269,17 @@ func validateRecord(record Record) error {
 	}
 	if record.Adapter != AdapterHost && record.Adapter != AdapterOCI {
 		return errors.New("decode worker record: invalid execution adapter")
+	}
+	if record.Adapter == AdapterHost && (record.Runtime != "" || record.RuntimePosture != "") {
+		return errors.New("decode worker record: host worker has OCI runtime metadata")
+	}
+	if record.Adapter == AdapterOCI {
+		if record.Runtime != RuntimePodman && record.Runtime != RuntimeDocker {
+			return errors.New("decode worker record: invalid OCI runtime")
+		}
+		if record.RuntimePosture != PostureRootless && record.RuntimePosture != PostureRootful {
+			return errors.New("decode worker record: invalid OCI runtime posture")
+		}
 	}
 	if record.Provider != "codex" && record.Provider != "claude" && record.Provider != "copilot" {
 		return errors.New("decode worker record: invalid provider")

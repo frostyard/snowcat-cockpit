@@ -18,6 +18,7 @@ var (
 
 type Request struct {
 	Adapter    string `json:"adapter,omitempty"`
+	Runtime    string `json:"runtime,omitempty"`
 	Provider   string `json:"provider"`
 	Role       string `json:"role"`
 	Repository string `json:"repository"`
@@ -33,6 +34,7 @@ type Failure struct {
 
 type Result struct {
 	Adapter    string             `json:"adapter"`
+	Runtime    string             `json:"runtime,omitempty"`
 	Repository string             `json:"repository"`
 	Role       string             `json:"role"`
 	Provider   string             `json:"provider"`
@@ -64,6 +66,15 @@ func (controller *Controller) Launch(ctx context.Context, request Request) (Resu
 	if request.Adapter != worker.AdapterHost && request.Adapter != worker.AdapterOCI {
 		return Result{}, fmt.Errorf("%w: adapter must be host or oci", ErrInvalid)
 	}
+	if request.Adapter == worker.AdapterHost && request.Runtime != "" {
+		return Result{}, fmt.Errorf("%w: runtime is valid only with the oci adapter", ErrInvalid)
+	}
+	if request.Adapter == worker.AdapterOCI && request.Runtime == "" {
+		request.Runtime = worker.RuntimePodman
+	}
+	if request.Adapter == worker.AdapterOCI && request.Runtime != worker.RuntimePodman && request.Runtime != worker.RuntimeDocker {
+		return Result{}, fmt.Errorf("%w: OCI runtime must be podman or docker", ErrInvalid)
+	}
 	role := queueview.Role(request.Role)
 	if request.Count < 1 || request.Count > MaxWorkers {
 		return Result{}, fmt.Errorf("%w: count must be between 1 and %d", ErrInvalid, MaxWorkers)
@@ -86,6 +97,7 @@ func (controller *Controller) Launch(ctx context.Context, request Request) (Resu
 	planned := min(request.Count, eligible)
 	result := Result{
 		Adapter:    request.Adapter,
+		Runtime:    request.Runtime,
 		Repository: request.Repository,
 		Role:       request.Role,
 		Provider:   request.Provider,
@@ -99,6 +111,7 @@ func (controller *Controller) Launch(ctx context.Context, request Request) (Resu
 	for ordinal := 1; ordinal <= planned; ordinal++ {
 		record, launchErr := controller.workers.Launch(ctx, worker.LaunchRequest{
 			Adapter:    request.Adapter,
+			Runtime:    request.Runtime,
 			Provider:   request.Provider,
 			Role:       request.Role,
 			Repository: request.Repository,

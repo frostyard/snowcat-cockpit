@@ -39,12 +39,21 @@ tools.
 - run `dist/snowcat-cockpit serve`, unless a test supplies
   `SNOWCAT_COCKPIT_BIN`.
 
-When any supported `SNOWCAT_COCKPIT_OCI_*_IMAGE` variable (or the legacy Codex
+When any supported `SNOWCAT_COCKPIT_OCI_*_IMAGE` or
+`SNOWCAT_COCKPIT_DOCKER_*_IMAGE` variable (or the legacy Codex
 `SNOWCAT_COCKPIT_OCI_IMAGE`) is set and `GH_TOKEN` is absent, the wrapper
 MUST invoke `gh auth token` and export its non-empty single-line result only to
 the node process. It MUST NOT print, persist, or place the token in argv. A
 missing GitHub CLI or invalid login MUST fail before the node starts. An
 operator-supplied `GH_TOKEN` takes precedence.
+
+When any Docker image variable is set, the wrapper resolves its fixed Snowcat
+tailnet hostname with `getent ahostsv4` and exports one
+`SNOWCAT_COCKPIT_DOCKER_ADD_HOST=<hostname>:<IPv4>` mapping unless the operator
+supplied one. This gives Docker bridge workers the single tailnet route they
+need while retaining Docker's public DNS for provider and GitHub endpoints.
+The worker manager validates the mapping before workspace allocation, and host
+networking remains forbidden.
 
 ## HTTP interface
 
@@ -105,6 +114,7 @@ Fleet request:
 ```json
 {
   "adapter": "oci",
+  "runtime": "docker",
   "provider": "codex",
   "role": "implementer",
   "repository": "frostyard/firn",
@@ -114,7 +124,9 @@ Fleet request:
 }
 ```
 
-`adapter` MUST be exact `host` or `oci` and defaults to `host`. `count` MUST be
+`adapter` MUST be exact `host` or `oci` and defaults to `host`. `runtime` MUST
+be absent for host, or exact `podman` or `docker` for OCI; it defaults to
+`podman`. `count` MUST be
 between 1 and 12. The node takes one new snapshot inside the
 fleet request, computes `planned = min(count, eligible-for-role)`, and invokes
 the existing managed-worker launch exactly `planned` times. The result includes
@@ -192,8 +204,9 @@ A contract is suspicious when `requiredArtifact: pull-request` lacks
 - A batch MUST NOT refill after launch. Each worker independently claims at
   most one item through Snowcat MCP; Snowcat remains authoritative under
   concurrent nodes.
-- Every worker in a batch MUST receive the request's exact normalized adapter;
-  Cockpit MUST NOT select or change an adapter from provider or fleet size.
+- Every worker in a batch MUST receive the request's exact normalized adapter
+  and runtime; Cockpit MUST NOT select or change either from provider or fleet
+  size.
 - Worker correlation MUST validate the exact repository and label projection;
   it MUST fail closed on an unknown outcome or malformed match.
 

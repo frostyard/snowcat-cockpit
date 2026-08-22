@@ -310,7 +310,10 @@ function renderWorkers(records) {
     const providerLabel = document.createElement("strong");
     providerLabel.textContent = worker.provider;
     const adapterLabel = document.createElement("small");
-    adapterLabel.textContent = worker.model ? `${worker.adapter || "host"} · ${worker.model}` : worker.adapter || "host";
+    const execution = [worker.adapter || "host"];
+    if (worker.runtime) execution.push(`${worker.runtime} ${worker.runtimePosture || "unknown"}`);
+    if (worker.model) execution.push(worker.model);
+    adapterLabel.textContent = execution.join(" · ");
     providerName.append(providerLabel, adapterLabel);
     provider.append(providerName);
     const role = document.createElement("td");
@@ -370,6 +373,7 @@ function openLaunchDialog(role) {
   byId("launch-title").textContent = `Launch one ${role}`;
   byId("launch-message").textContent = "";
   populateProviders("launch");
+  syncRuntime("launch");
   byId("launch-dialog").showModal();
 }
 
@@ -386,6 +390,11 @@ function populateProviders(prefix) {
   }
 }
 
+function syncRuntime(prefix) {
+  const runtime = byId(`${prefix}-runtime`);
+  runtime.disabled = byId(`${prefix}-adapter`).value !== "oci";
+}
+
 function closeLaunchDialog() {
   if (byId("launch-dialog").open) byId("launch-dialog").close();
 }
@@ -396,6 +405,7 @@ function openFleetDialog(role) {
   byId("fleet-title").textContent = `Launch ${role} fleet`;
   byId("fleet-message").textContent = `${eligible} eligible in the latest view; Cockpit will take a fresh snapshot before launch.`;
   populateProviders("fleet");
+  syncRuntime("fleet");
   byId("fleet-count").value = String(Math.min(3, Math.max(1, eligible)));
   byId("fleet-repository").value = latestSnapshot?.repository || byId("queue-repository").value.trim();
   if (!byId("fleet-source").value) byId("fleet-source").value = byId("launch-source").value;
@@ -418,6 +428,7 @@ async function submitFleet(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         adapter: byId("fleet-adapter").value,
+        runtime: byId("fleet-adapter").value === "oci" ? byId("fleet-runtime").value : "",
         provider: byId("fleet-provider").value,
         role: fleetRole,
         repository: byId("fleet-repository").value.trim(),
@@ -455,6 +466,7 @@ async function submitLaunch(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         adapter: byId("launch-adapter").value,
+        runtime: byId("launch-adapter").value === "oci" ? byId("launch-runtime").value : "",
         provider: byId("launch-provider").value,
         role: launchRole,
         repository: byId("launch-repository").value.trim(),
@@ -585,11 +597,17 @@ byId("launch-fleet-reviewer").addEventListener("click", () => openFleetDialog("r
 byId("launch-close").addEventListener("click", closeLaunchDialog);
 byId("launch-cancel").addEventListener("click", closeLaunchDialog);
 byId("launch-form").addEventListener("submit", submitLaunch);
-byId("launch-adapter").addEventListener("change", () => populateProviders("launch"));
+byId("launch-adapter").addEventListener("change", () => {
+  populateProviders("launch");
+  syncRuntime("launch");
+});
 byId("fleet-close").addEventListener("click", closeFleetDialog);
 byId("fleet-cancel").addEventListener("click", closeFleetDialog);
 byId("fleet-form").addEventListener("submit", submitFleet);
-byId("fleet-adapter").addEventListener("change", () => populateProviders("fleet"));
+byId("fleet-adapter").addEventListener("change", () => {
+  populateProviders("fleet");
+  syncRuntime("fleet");
+});
 byId("queue-form").addEventListener("submit", observeQueue);
 loadHealth();
 loadChecks();

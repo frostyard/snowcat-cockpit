@@ -5,11 +5,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
 	"github.com/frostyard/snowcat-cockpit/internal/state"
+	"github.com/frostyard/snowcat-cockpit/internal/worker"
 )
 
 func TestValidateListenAddress(t *testing.T) {
@@ -40,6 +42,24 @@ func TestValidateListenAddress(t *testing.T) {
 				t.Fatal("expected invalid address")
 			}
 		})
+	}
+}
+
+func TestWriteWorkerRecordReportsOCIRuntimePosture(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	record := worker.Record{
+		ID: "worker-0123456789abcdef", Status: worker.StatusRunning,
+		Adapter: worker.AdapterOCI, Runtime: worker.RuntimeDocker, RuntimePosture: worker.PostureRootful,
+		Workspace: "/tmp/workspace", Branch: "cockpit/worker-0123456789abcdef",
+	}
+	if code := writeWorkerRecord(&stdout, &stderr, record, false); code != 0 {
+		t.Fatalf("writeWorkerRecord exit = %d; stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "(oci, docker rootful)") {
+		t.Fatalf("worker output does not report runtime posture: %s", stdout.String())
 	}
 }
 

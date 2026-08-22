@@ -4,6 +4,7 @@ set -euo pipefail
 readonly PROGRAM_NAME="${0##*/}"
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly MCP_URL="https://snowcat.goat-snake.ts.net/mcp"
+readonly MCP_HOST="snowcat.goat-snake.ts.net"
 
 CREDENTIAL_FILE="${SNOWCAT_COCKPIT_OBSERVER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env}"
 COCKPIT_BIN="${SNOWCAT_COCKPIT_BIN:-$PROJECT_ROOT/dist/snowcat-cockpit}"
@@ -42,15 +43,31 @@ done <"$CREDENTIAL_FILE"
 [[ "$observer_token" =~ ^snowcat_[[:alnum:]_-]+$ ]] || die "observer credential file has an invalid SNOWCAT_OBSERVER_TOKEN"
 [[ -x "$COCKPIT_BIN" ]] || die "Cockpit binary is not executable: $COCKPIT_BIN (run make build)"
 
-if [[ -n "${SNOWCAT_COCKPIT_OCI_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE:-}" && -z "${GH_TOKEN:-}" ]]; then
+if [[ -n "${SNOWCAT_COCKPIT_OCI_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE:-}" && -z "${GH_TOKEN:-}" ]]; then
   command -v gh >/dev/null 2>&1 || die "OCI workers require gh to project a GitHub token"
   GH_TOKEN="$(gh auth token)" || die "OCI workers require a valid GitHub CLI login"
   [[ -n "$GH_TOKEN" && "$GH_TOKEN" != *$'\n'* && "$GH_TOKEN" != *$'\r'* ]] || die "GitHub CLI returned an invalid token"
   export GH_TOKEN
 fi
 
-if [[ -n "${SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE:-}" ]]; then
+if [[ -n "${SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE:-}" ]]; then
   export SNOWCAT_MCP_URL="$MCP_URL"
+fi
+
+if [[ -n "${SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE:-}" ]]; then
+  if [[ -z "${SNOWCAT_COCKPIT_DOCKER_ADD_HOST:-}" ]]; then
+    command -v getent >/dev/null 2>&1 || die "Docker workers require getent to resolve the Snowcat tailnet endpoint"
+    docker_host_address=""
+    while read -r address _; do
+      if [[ "$address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        docker_host_address="$address"
+        break
+      fi
+    done < <(getent ahostsv4 "$MCP_HOST")
+    [[ -n "$docker_host_address" ]] || die "Docker workers could not resolve the Snowcat tailnet endpoint"
+    export SNOWCAT_COCKPIT_DOCKER_ADD_HOST="$MCP_HOST:$docker_host_address"
+    unset docker_host_address
+  fi
 fi
 
 export SNOWCAT_COCKPIT_MCP_URL="$MCP_URL"

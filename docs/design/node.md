@@ -102,12 +102,13 @@ process-local configuration. It does not fetch or infer a remote default
 branch. Its lifecycle follows the [managed-worker contract](../specs/managed-workers.md).
 
 The OCI adapter runs Codex, Claude, or Copilot once per container with a non-root user,
-a provider-specific SHA-256-pinned local image, a self-contained local Git clone,
+a runtime-specific SHA-256-pinned local image, a self-contained local Git clone,
 and exact provider and GitHub configuration files copied from read-only mounts into tmpfs. The
 clone avoids exposing the source repository's common Git directory and copies
-objects without hardlinks or network access. It supports rootless Podman only.
-Docker fails closed before workspace allocation and remains a later explicit
-compatibility slice.
+objects without hardlinks or network access. Runtime selection is explicit:
+rootless Podman is the default and preferred boundary; Docker may be selected
+explicitly and its detected rootless or rootful daemon posture is retained and
+shown to the operator. Rootful Docker is compatibility, not host isolation.
 
 The projection and unattended-permission boundary is recorded in
 [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md) and made

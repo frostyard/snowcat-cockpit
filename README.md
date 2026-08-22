@@ -116,8 +116,9 @@ retains the workspace; cleanup refuses a running or dirty workspace and leaves
 the branch intact. Observe makes one exact, read-only Snowcat correlation call;
 the result is displayed but never written into the worker record.
 
-For unattended Codex, Claude, and Copilot workers, build the rootless Podman images and
-pin launches to the resulting provider-specific image IDs:
+For unattended Codex, Claude, and Copilot workers, build images in the selected
+runtime's local store and pin launches to the resulting provider-specific image
+IDs. Podman remains the default:
 
 ```bash
 make oci-image
@@ -127,13 +128,24 @@ export SNOWCAT_MCP_TOKEN
 
 go run ./cmd/snowcat-cockpit worker launch \
   --adapter oci \
+  --runtime podman \
   --provider copilot \
   --role reviewer \
   --repository frostyard/firn \
   --source /path/to/local/firn
 ```
 
-OCI mode currently requires Linux, rootless Podman, the selected pinned image,
+For explicit Docker compatibility, run `make docker-image` and use
+`--runtime docker` with the printed `SNOWCAT_COCKPIT_DOCKER_*_IMAGE` exports.
+Cockpit records whether the Docker daemon is rootless or rootful; rootful Docker
+is not described as host isolation. The checked-in serve wrapper supplies
+a validated host mapping to Docker bridge workers so the fixed Snowcat tailnet
+endpoint resolves without replacing public DNS or using host networking;
+direct CLI launches can set `SNOWCAT_COCKPIT_DOCKER_ADD_HOST` to an explicit
+`hostname:IPv4` value.
+
+OCI mode requires Linux containers, the selected runtime and its pinned image,
+rootless posture when Podman is selected,
 private regular non-symlink provider files at either
 `${CODEX_HOME:-$HOME/.codex}/{auth.json,config.toml}` or
 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json` or

@@ -53,19 +53,28 @@ printf 'github-token-fixture\n'
 EOF
 chmod 0700 "$FAKE_BIN/gh"
 
+cat >"$FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "ahostsv4" && "$2" == "snowcat.goat-snake.ts.net" ]]
+printf '100.108.168.44 STREAM snowcat.goat-snake.ts.net\n'
+EOF
+chmod 0700 "$FAKE_BIN/getent"
+
 cat >"$FAKE_COCKPIT" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == "serve" ]]
 [[ "$GH_TOKEN" == "github-token-fixture" ]]
 [[ "$SNOWCAT_MCP_URL" == "https://snowcat.goat-snake.ts.net/mcp" ]]
+[[ "$SNOWCAT_COCKPIT_DOCKER_ADD_HOST" == "snowcat.goat-snake.ts.net:100.108.168.44" ]]
 printf 'OCI wrapper fixture passed\n'
 EOF
 chmod 0700 "$FAKE_COCKPIT"
 
 output="$(
   PATH="$FAKE_BIN:$PATH" \
-    SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE="sha256:fixture" \
+    SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE="sha256:fixture" \
     SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" \
     SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
     "$WRAPPER"

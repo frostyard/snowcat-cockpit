@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 GO ?= go
 GOCACHE ?= /tmp/snowcat-cockpit-gocache
 
-.PHONY: build ci fmt-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-go test-oci-entrypoints test-observer-wrapper test-spike vet
+.PHONY: build ci docker-image docker-image-claude docker-image-codex docker-image-copilot fmt-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-go test-oci-entrypoints test-observer-wrapper test-spike vet
 
 ci: fmt-check vet test
 
@@ -46,3 +46,17 @@ oci-image-claude:
 oci-image-copilot:
 	podman build --build-arg TARGETARCH="$$(go env GOARCH)" --file oci/Copilot.Containerfile --tag localhost/snowcat-cockpit-worker:copilot-1.0.80 .
 	@podman image inspect localhost/snowcat-cockpit-worker:copilot-1.0.80 --format 'export SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE=sha256:{{.Id}}'
+
+docker-image: docker-image-codex docker-image-claude docker-image-copilot
+
+docker-image-codex:
+	docker build --file oci/Containerfile --tag localhost/snowcat-cockpit-worker:codex-0.149.0 .
+	@docker image inspect localhost/snowcat-cockpit-worker:codex-0.149.0 --format 'export SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE={{.Id}}'
+
+docker-image-claude:
+	docker build --build-arg TARGETARCH="$$(go env GOARCH)" --file oci/Claude.Containerfile --tag localhost/snowcat-cockpit-worker:claude-2.1.239 .
+	@docker image inspect localhost/snowcat-cockpit-worker:claude-2.1.239 --format 'export SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE={{.Id}}'
+
+docker-image-copilot:
+	docker build --build-arg TARGETARCH="$$(go env GOARCH)" --file oci/Copilot.Containerfile --tag localhost/snowcat-cockpit-worker:copilot-1.0.80 .
+	@docker image inspect localhost/snowcat-cockpit-worker:copilot-1.0.80 --format 'export SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE={{.Id}}'
