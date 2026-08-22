@@ -372,6 +372,11 @@ completed Snowcat attempts. The campaign remains idle and running so operator
 admission can prove the implementation/review continuation without another
 start.
 
+The restart boundary also passed: killing the node while that idle campaign
+was active left all seven worker records and workspaces intact. The new process
+marked the campaign interrupted and stopped, launched nothing, and required an
+explicit new start before returning to the running empty-board state.
+
 ## Later / ideas
 
 - Authenticated non-loopback service mode.

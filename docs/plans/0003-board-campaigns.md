@@ -47,10 +47,12 @@ with every observed lane empty, ready for work admitted from those proposals.
 - **Done when:** killing and restarting the node loses no workspace, launches
   no surprise worker, and presents an actionable interrupted campaign record.
 
-The durable-state unit test covers interrupted active-state recovery, and the
-live stopped campaign survived a node rebuild/restart without launching work.
-Host no-work and Docker active-work paths are exercised. Rootless Podman and an
-actual killed-while-active acceptance run remain.
+The durable-state unit test covers interrupted active-state recovery. The live
+node was then killed while its empty Docker campaign remained active. Restart
+changed the durable record to `stopped` with the interrupted explanation,
+retained all seven exited workers, and launched nothing. A new explicit start
+returned it to the empty-board running state. Host no-work and Docker
+active-work paths are exercised; a rootless-Podman campaign remains.
 
 ## Later / ideas
 
