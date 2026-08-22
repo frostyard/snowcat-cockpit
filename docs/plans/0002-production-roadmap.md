@@ -167,9 +167,8 @@ input-file metadata before workspace allocation, and launches a one-shot Codex
 process in a read-only, non-root container with bounded tmpfs and no runtime
 socket, host network, capabilities, or container logs. The image entrypoint
 copies provider and GitHub configuration into the ephemeral home without
-Cockpit reading or persisting it. Docker, Claude, multi-architecture
-publication, and the host/container implementation-and-review trial remain
-before Phase 5 is complete.
+Cockpit reading or persisting it. Docker, Claude, and multi-architecture
+publication remain before Phase 5 is complete.
 
 The first live implementation-and-review launch exposed a linked-worktree
 boundary defect before either worker claimed Snowcat work: the worktree's
@@ -224,7 +223,33 @@ the established OCI boundary. A hardened no-claim acceptance run authenticated
 through the in-memory GitHub token, called Snowcat `list_work` through the
 mounted HTTP MCP configuration, made no repository changes, and exited
 normally. The observed Firn queue was empty, so a cross-provider delivery pair
-remains the next live trial rather than an inferred success.
+remained the next live trial rather than an inferred success.
+
+That live trial subsequently passed. Two Codex and one Copilot OCI discoverer
+completed Firn attempts 4256, 4261, and 4257 respectively, after which the
+operator admitted bounded implementation proposals. The first admitted quality
+gap was already resolved on current main and correctly produced no pull
+request. Codex implementer `worker-7b8ecf1802b0d9b1` then completed docs-drift
+attempt 4272, opened Firn PR #68 at immutable head `bf8efbd`, and passed all
+eight repository checks. Its completion retry exposed transient MCP transport
+errors, but independent unauthenticated probes from both the host and the exact
+rootless Copilot image resolved the tailnet address and reached Snowcat three
+times each; the attempt completed without changing the container network
+boundary.
+
+Snowcat's polling verifier emitted review item
+`42e20c1d-18b1-402b-b83f-dc7f79593458` after the expected multi-minute delay.
+Copilot reviewer `worker-72099702ee60c94a`, launched with model selector
+`auto`, completed attempt 4275 under the independent-review contract. The
+verifier accepted its pass verdict, moved PR #68 out of draft, and left it
+cleanly mergeable. All provider processes exited while Cockpit retained their
+terminals and self-contained workspaces.
+
+The trial also exposed an operator-input freshness risk: the selected clean
+Firn `main` was behind its local `origin/main` tracking ref, which was itself
+behind GitHub. Cockpit intentionally neither fetches nor chooses a remote ref;
+a later readiness slice should make the selected base commit and local
+ahead/behind state conspicuous before launch without silently mutating it.
 
 ## Later / ideas
 
