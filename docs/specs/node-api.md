@@ -11,7 +11,8 @@ snowcat-cockpit install-kit [--json] [--skills-dir <directory>]
 snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
 snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
 snowcat-cockpit workers [--json] [--state-dir <directory>]
-snowcat-cockpit worker <launch|observe|attach|stop|cleanup> ...
+snowcat-cockpit worker launch --adapter <host|oci> ...
+snowcat-cockpit worker <observe|attach|stop|cleanup> ...
 snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
 snowcat-cockpit version
 snowcat-cockpit help
@@ -101,6 +102,9 @@ MUST return an HTTP 404.
 11. Queue snapshots, worker observations, and batch launches MUST follow the
     [queue observation and bounded fleets](queue-observation-and-fleets.md)
     contract.
+12. An OCI worker launch MUST follow the [rootless OCI worker](oci-workers.md)
+    contract and fail before workspace allocation when its boundary is not
+    ready.
 
 ## References
 
@@ -110,3 +114,4 @@ MUST return an HTTP 404.
 - Live readiness contract: [provider preflight](provider-preflight.md)
 - Worker lifecycle contract: [managed workers](managed-workers.md)
 - Queue and batch contract: [queue observation and bounded fleets](queue-observation-and-fleets.md)
+- Unattended execution contract: [rootless OCI workers](oci-workers.md)

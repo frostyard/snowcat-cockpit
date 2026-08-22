@@ -26,6 +26,9 @@ import (
 )
 
 const (
+	AdapterHost = "host"
+	AdapterOCI  = "oci"
+
 	StatusAllocating = "allocating"
 	StatusRunning    = "running"
 	StatusExited     = "exited"
@@ -46,9 +49,11 @@ var (
 	repositoryRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	commitRE     = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 	interfaceRE  = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	imageIDRE    = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._/:@-]*@)?sha256:[0-9a-f]{64}$`)
 )
 
 type LaunchRequest struct {
+	Adapter    string `json:"adapter,omitempty"`
 	Provider   string `json:"provider"`
 	Role       string `json:"role"`
 	Repository string `json:"repository"`
@@ -60,6 +65,7 @@ type Record struct {
 	Version    int        `json:"version"`
 	ID         string     `json:"id"`
 	NodeID     string     `json:"nodeId"`
+	Adapter    string     `json:"adapter"`
 	Provider   string     `json:"provider"`
 	Role       string     `json:"role"`
 	Repository string     `json:"repository"`
@@ -121,6 +127,13 @@ type Config struct {
 	Now            func() time.Time
 	Random         io.Reader
 	Environment    func() []string
+	OCI            OCIConfig
+}
+
+type OCIConfig struct {
+	Image       string
+	CodexHome   string
+	GHConfigDir string
 }
 
 type Manager struct {
@@ -132,6 +145,7 @@ type Manager struct {
 	now            func() time.Time
 	random         io.Reader
 	environment    func() []string
+	oci            OCIConfig
 	consoles       map[string]*consoleProcess
 	mutex          sync.Mutex
 }
@@ -168,6 +182,7 @@ func New(config Config) (*Manager, error) {
 		now:            config.Now,
 		random:         config.Random,
 		environment:    func() []string { return workerEnvironment(parentEnvironment()) },
+		oci:            config.OCI,
 		consoles:       make(map[string]*consoleProcess),
 	}, nil
 }
@@ -201,9 +216,18 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	if err != nil {
 		return Record{}, fmt.Errorf("%w: tmux is not available", ErrNotReady)
 	}
-	providerPath, err := manager.lookPath(request.Provider)
-	if err != nil {
-		return Record{}, fmt.Errorf("%w: %s is not available", ErrNotReady, request.Provider)
+	var providerPath string
+	var runtimePath string
+	if request.Adapter == AdapterHost {
+		providerPath, err = manager.lookPath(request.Provider)
+		if err != nil {
+			return Record{}, fmt.Errorf("%w: %s is not available", ErrNotReady, request.Provider)
+		}
+	} else {
+		runtimePath, err = manager.validateOCI(ctx, request)
+		if err != nil {
+			return Record{}, err
+		}
 	}
 
 	source, err := canonicalDirectory(request.Source)
@@ -236,7 +260,7 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	now := manager.now().UTC()
 	record := Record{
 		Version: recordVersion, ID: workerID, NodeID: manager.nodeID,
-		Provider: request.Provider, Role: request.Role, Repository: request.Repository,
+		Adapter: request.Adapter, Provider: request.Provider, Role: request.Role, Repository: request.Repository,
 		Source: source, Workspace: workspace, BaseRef: request.BaseRef,
 		BaseCommit: baseCommit, Branch: branch, Status: StatusAllocating,
 		Detail: "allocating isolated Git worktree", CreatedAt: now,
@@ -264,16 +288,19 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	}
 	environment := gitEnvironment(manager.environment(), excludePath)
 	prompt := BuildPrompt(workerID, request.Role, request.Repository)
-	providerArguments := []string{prompt}
-	if request.Provider == "copilot" {
-		providerArguments = []string{"-i", prompt}
+	launchCommand := []string{providerPath, prompt}
+	if request.Adapter == AdapterOCI {
+		launchCommand = append([]string{runtimePath}, manager.ociArguments(record, prompt)...)
+		environment = ociHostEnvironment(environment)
+	} else if request.Provider == "copilot" {
+		launchCommand = []string{providerPath, "-i", prompt}
 	}
-	if err := manager.startTmux(ctx, tmuxPath, record, providerPath, providerArguments, environment); err != nil {
+	if err := manager.startTmux(ctx, tmuxPath, record, launchCommand, environment); err != nil {
 		return manager.fail(record, "tmux provider launch failed", err)
 	}
 	startedAt := manager.now().UTC()
 	record.Status = StatusRunning
-	record.Detail = "provider running; terminal and workspace retained"
+	record.Detail = request.Adapter + " provider running; terminal and workspace retained"
 	record.StartedAt = &startedAt
 	if err := manager.write(record); err != nil {
 		return record, err
@@ -492,6 +519,15 @@ func (manager *Manager) stopConsoleLocked(workerID string) {
 
 func (manager *Manager) stopTerminalLocked(ctx context.Context, record Record) error {
 	manager.stopConsoleLocked(record.ID)
+	if record.Adapter == AdapterOCI {
+		podmanPath, err := manager.lookPath("podman")
+		if err != nil {
+			return fmt.Errorf("stop OCI worker: rootless Podman is unavailable: %w", err)
+		}
+		if _, err := manager.run(ctx, podmanPath, "", ociHostEnvironment(manager.environment()), "stop", "--ignore", "--time", "10", manager.containerName(record.ID)); err != nil {
+			return fmt.Errorf("stop OCI worker container: %w", err)
+		}
+	}
 	if tmuxPath, err := manager.lookPath("tmux"); err == nil && manager.tmuxExists(ctx, tmuxPath, record) {
 		if _, err := manager.run(ctx, tmuxPath, "", nil, "-S", manager.socketPath(record.ID), "kill-server"); err != nil {
 			return fmt.Errorf("stop retained worker terminal: %w", err)
@@ -529,8 +565,14 @@ func BuildPrompt(workerID, role, repository string) string {
 }
 
 func validateRequest(request *LaunchRequest) error {
+	if request.Adapter == "" {
+		request.Adapter = AdapterHost
+	}
 	if request.BaseRef == "" {
 		request.BaseRef = "HEAD"
+	}
+	if request.Adapter != AdapterHost && request.Adapter != AdapterOCI {
+		return fmt.Errorf("%w: adapter must be host or oci", ErrInvalid)
 	}
 	if request.Provider != "codex" && request.Provider != "claude" && request.Provider != "copilot" {
 		return fmt.Errorf("%w: unsupported provider", ErrInvalid)
@@ -545,6 +587,114 @@ func validateRequest(request *LaunchRequest) error {
 		return fmt.Errorf("%w: source and a safe local base ref are required", ErrInvalid)
 	}
 	return nil
+}
+
+func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) (string, error) {
+	if request.Provider != "codex" {
+		return "", fmt.Errorf("%w: the first OCI slice supports only codex", ErrNotReady)
+	}
+	if runtime.GOOS != "linux" {
+		return "", fmt.Errorf("%w: the rootless Podman adapter requires Linux", ErrNotReady)
+	}
+	if !imageIDRE.MatchString(manager.oci.Image) {
+		return "", fmt.Errorf("%w: SNOWCAT_COCKPIT_OCI_IMAGE must be pinned by SHA-256", ErrNotReady)
+	}
+	podmanPath, err := manager.lookPath("podman")
+	if err != nil {
+		return "", fmt.Errorf("%w: rootless Podman is not available", ErrNotReady)
+	}
+	hostEnvironment := ociHostEnvironment(manager.environment())
+	output, err := manager.run(ctx, podmanPath, "", hostEnvironment, "info", "--format", "{{.Host.Security.Rootless}}")
+	if err != nil || strings.TrimSpace(string(output)) != "true" {
+		return "", fmt.Errorf("%w: Podman is not structurally rootless", ErrNotReady)
+	}
+	if _, err := manager.run(ctx, podmanPath, "", hostEnvironment, "image", "exists", manager.oci.Image); err != nil {
+		return "", fmt.Errorf("%w: pinned OCI worker image is not available locally", ErrNotReady)
+	}
+	for _, input := range []string{
+		filepath.Join(manager.oci.CodexHome, "auth.json"),
+		filepath.Join(manager.oci.CodexHome, "config.toml"),
+		filepath.Join(manager.oci.GHConfigDir, "hosts.yml"),
+		filepath.Join(manager.oci.GHConfigDir, "config.yml"),
+	} {
+		if err := validatePrivateInput(input); err != nil {
+			return "", fmt.Errorf("%w: OCI input %s is unavailable: %v", ErrNotReady, filepath.Base(input), err)
+		}
+	}
+	if !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_TOKEN") {
+		return "", fmt.Errorf("%w: SNOWCAT_MCP_TOKEN is not present in the node environment", ErrNotReady)
+	}
+	return podmanPath, nil
+}
+
+func validatePrivateInput(path string) error {
+	if path == "" {
+		return errors.New("path is not configured")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("must be a regular non-symlink file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return errors.New("group and other permission bits must be zero")
+	}
+	if !privateInputOwnedByCurrentUser(info) {
+		return errors.New("must be owned by the current user")
+	}
+	return nil
+}
+
+func hasNonemptyEnvironment(environment []string, name string) bool {
+	prefix := name + "="
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) && len(entry) > len(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func ociHostEnvironment(environment []string) []string {
+	allowed := map[string]bool{
+		"PATH": true, "HOME": true, "USER": true, "LOGNAME": true,
+		"XDG_RUNTIME_DIR": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
+		"XDG_CACHE_HOME": true, "DBUS_SESSION_BUS_ADDRESS": true,
+		"CONTAINER_HOST": true, "TMPDIR": true, "SNOWCAT_MCP_TOKEN": true,
+	}
+	result := make([]string, 0, len(allowed))
+	for _, entry := range environment {
+		name, _, found := strings.Cut(entry, "=")
+		if found && allowed[name] {
+			result = append(result, entry)
+		}
+	}
+	return result
+}
+
+func (manager *Manager) ociArguments(record Record, prompt string) []string {
+	inputMount := func(source, destination string) string {
+		return "type=bind,source=" + source + ",destination=" + destination + ",ro=true"
+	}
+	return []string{
+		"run", "--rm", "--pull=never", "--tty",
+		"--name", manager.containerName(record.ID),
+		"--read-only", "--read-only-tmpfs=false",
+		"--userns=keep-id:uid=1000,gid=1000", "--user=1000:1000",
+		"--cap-drop=ALL", "--security-opt=no-new-privileges",
+		"--pids-limit=512", "--log-driver=none",
+		"--tmpfs=/home/cockpit:rw,size=512m,mode=1777",
+		"--tmpfs=/tmp:rw,size=2g,mode=1777",
+		"--mount", "type=bind,source=" + record.Workspace + ",destination=/workspace,rw=true",
+		"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "auth.json"), "/run/cockpit/input/codex/auth.json"),
+		"--mount", inputMount(filepath.Join(manager.oci.CodexHome, "config.toml"), "/run/cockpit/input/codex/config.toml"),
+		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "hosts.yml"), "/run/cockpit/input/gh/hosts.yml"),
+		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "config.yml"), "/run/cockpit/input/gh/config.yml"),
+		"--env", "SNOWCAT_MCP_TOKEN",
+		manager.oci.Image, prompt,
+	}
 }
 
 func canonicalDirectory(path string) (string, error) {
@@ -574,14 +724,14 @@ func newWorkerID(random io.Reader) (string, error) {
 	return "worker-" + hex.EncodeToString(value), nil
 }
 
-func (manager *Manager) startTmux(ctx context.Context, tmuxPath string, record Record, providerPath string, providerArguments, environment []string) error {
+func (manager *Manager) startTmux(ctx context.Context, tmuxPath string, record Record, launchCommand, environment []string) error {
 	if err := os.MkdirAll(manager.socketDirectory(), 0o700); err != nil {
 		return fmt.Errorf("create private terminal directory: %w", err)
 	}
 	if err := os.Chmod(manager.socketDirectory(), 0o700); err != nil {
 		return fmt.Errorf("secure private terminal directory: %w", err)
 	}
-	commandLine := shellJoin(append([]string{providerPath}, providerArguments...))
+	commandLine := shellJoin(launchCommand)
 	arguments := []string{
 		"-S", manager.socketPath(record.ID),
 		"new-session", "-d", "-s", "worker", "-n", "console", "-c", record.Workspace,
@@ -629,6 +779,10 @@ func (manager *Manager) socketPath(workerID string) string {
 func (manager *Manager) socketDirectory() string {
 	digest := sha256.Sum256([]byte(manager.nodeID))
 	return filepath.Join(os.TempDir(), "sc-"+hex.EncodeToString(digest[:8]))
+}
+
+func (manager *Manager) containerName(workerID string) string {
+	return "cockpit-" + workerID
 }
 
 func shellJoin(arguments []string) string {
@@ -754,6 +908,9 @@ func (manager *Manager) read(workerID string) (Record, error) {
 	if err := decoder.Decode(&record); err != nil {
 		return Record{}, fmt.Errorf("decode worker record: %w", err)
 	}
+	if record.Adapter == "" {
+		record.Adapter = AdapterHost
+	}
 	if err := validateRecord(record); err != nil {
 		return Record{}, err
 	}
@@ -786,6 +943,9 @@ func (manager *Manager) readAll() ([]Record, error) {
 func validateRecord(record Record) error {
 	if record.Version != recordVersion || !workerIDRE.MatchString(record.ID) || record.NodeID == "" {
 		return errors.New("decode worker record: invalid identity or version")
+	}
+	if record.Adapter != AdapterHost && record.Adapter != AdapterOCI {
+		return errors.New("decode worker record: invalid execution adapter")
 	}
 	if record.Provider != "codex" && record.Provider != "claude" && record.Provider != "copilot" {
 		return errors.New("decode worker record: invalid provider")

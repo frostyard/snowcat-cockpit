@@ -134,7 +134,7 @@ func TestRoutes(t *testing.T) {
 
 	t.Run("bounded fleet launch", func(t *testing.T) {
 		before := len(workers.launches)
-		body := strings.NewReader(`{"provider":"codex","role":"implementer","repository":"frostyard/firn","source":"/repo","baseRef":"main","count":9}`)
+		body := strings.NewReader(`{"adapter":"oci","provider":"codex","role":"implementer","repository":"frostyard/firn","source":"/repo","baseRef":"main","count":9}`)
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/fleets", body)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -152,6 +152,9 @@ func TestRoutes(t *testing.T) {
 		}
 		if result.Eligible != 2 || result.Planned != 2 || len(result.Launched) != 2 || len(workers.launches)-before != 2 {
 			t.Fatalf("result = %#v, launches = %d", result, len(workers.launches)-before)
+		}
+		if workers.launches[before].Adapter != worker.AdapterOCI {
+			t.Fatalf("fleet adapter = %q", workers.launches[before].Adapter)
 		}
 	})
 
@@ -239,7 +242,7 @@ func TestRoutes(t *testing.T) {
 	})
 
 	t.Run("launch worker", func(t *testing.T) {
-		body := strings.NewReader(`{"provider":"claude","role":"implementer","repository":"frostyard/firn","source":"/repo","baseRef":"HEAD"}`)
+		body := strings.NewReader(`{"adapter":"oci","provider":"codex","role":"implementer","repository":"frostyard/firn","source":"/repo","baseRef":"HEAD"}`)
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/workers", body)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -247,7 +250,7 @@ func TestRoutes(t *testing.T) {
 		if response.Code != http.StatusCreated {
 			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 		}
-		if workers.launch.Role != "implementer" || workers.launch.Repository != "frostyard/firn" {
+		if workers.launch.Adapter != worker.AdapterOCI || workers.launch.Role != "implementer" || workers.launch.Repository != "frostyard/firn" {
 			t.Fatalf("launch = %#v", workers.launch)
 		}
 	})

@@ -305,7 +305,14 @@ function renderWorkers(records) {
       state.append(workState);
     }
     const provider = document.createElement("td");
-    provider.textContent = worker.provider;
+    const providerName = document.createElement("div");
+    providerName.className = "ph-name";
+    const providerLabel = document.createElement("strong");
+    providerLabel.textContent = worker.provider;
+    const adapterLabel = document.createElement("small");
+    adapterLabel.textContent = worker.adapter || "host";
+    providerName.append(providerLabel, adapterLabel);
+    provider.append(providerName);
     const role = document.createElement("td");
     role.textContent = worker.role;
     const repository = document.createElement("td");
@@ -362,15 +369,21 @@ function openLaunchDialog(role) {
   byId("launch-role").value = role;
   byId("launch-title").textContent = `Launch one ${role}`;
   byId("launch-message").textContent = "";
-  const provider = byId("launch-provider");
+  populateProviders("launch");
+  byId("launch-dialog").showModal();
+}
+
+function populateProviders(prefix) {
+  const provider = byId(`${prefix}-provider`);
   provider.replaceChildren();
-  for (const candidate of readyProviders) {
+  const adapter = byId(`${prefix}-adapter`).value;
+  const candidates = adapter === "oci" ? readyProviders.filter((candidate) => candidate.id === "codex") : readyProviders;
+  for (const candidate of candidates) {
     const option = document.createElement("option");
     option.value = candidate.id;
     option.textContent = candidate.label;
     provider.append(option);
   }
-  byId("launch-dialog").showModal();
 }
 
 function closeLaunchDialog() {
@@ -382,14 +395,7 @@ function openFleetDialog(role) {
   const eligible = latestSnapshot?.counts?.[role] || 0;
   byId("fleet-title").textContent = `Launch ${role} fleet`;
   byId("fleet-message").textContent = `${eligible} eligible in the latest view; Cockpit will take a fresh snapshot before launch.`;
-  const provider = byId("fleet-provider");
-  provider.replaceChildren();
-  for (const candidate of readyProviders) {
-    const option = document.createElement("option");
-    option.value = candidate.id;
-    option.textContent = candidate.label;
-    provider.append(option);
-  }
+  populateProviders("fleet");
   byId("fleet-count").value = String(Math.min(3, Math.max(1, eligible)));
   byId("fleet-repository").value = latestSnapshot?.repository || byId("queue-repository").value.trim();
   if (!byId("fleet-source").value) byId("fleet-source").value = byId("launch-source").value;
@@ -410,6 +416,7 @@ async function submitFleet(event) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        adapter: byId("fleet-adapter").value,
         provider: byId("fleet-provider").value,
         role: fleetRole,
         repository: byId("fleet-repository").value.trim(),
@@ -445,6 +452,7 @@ async function submitLaunch(event) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        adapter: byId("launch-adapter").value,
         provider: byId("launch-provider").value,
         role: launchRole,
         repository: byId("launch-repository").value.trim(),
@@ -560,9 +568,11 @@ byId("launch-fleet-reviewer").addEventListener("click", () => openFleetDialog("r
 byId("launch-close").addEventListener("click", closeLaunchDialog);
 byId("launch-cancel").addEventListener("click", closeLaunchDialog);
 byId("launch-form").addEventListener("submit", submitLaunch);
+byId("launch-adapter").addEventListener("change", () => populateProviders("launch"));
 byId("fleet-close").addEventListener("click", closeFleetDialog);
 byId("fleet-cancel").addEventListener("click", closeFleetDialog);
 byId("fleet-form").addEventListener("submit", submitFleet);
+byId("fleet-adapter").addEventListener("change", () => populateProviders("fleet"));
 byId("queue-form").addEventListener("submit", observeQueue);
 loadHealth();
 loadChecks();

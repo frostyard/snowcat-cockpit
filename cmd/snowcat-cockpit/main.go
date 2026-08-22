@@ -106,9 +106,9 @@ func runWorkers(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "no managed workers")
 		return 0
 	}
-	fmt.Fprintln(stdout, "WORKER | STATUS | PROVIDER | ROLE | REPOSITORY | WORKSPACE")
+	fmt.Fprintln(stdout, "WORKER | STATUS | ADAPTER | PROVIDER | ROLE | REPOSITORY | WORKSPACE")
 	for _, record := range records {
-		fmt.Fprintf(stdout, "%s | %s | %s | %s | %s | %s\n", record.ID, record.Status, record.Provider, record.Role, record.Repository, record.Workspace)
+		fmt.Fprintf(stdout, "%s | %s | %s | %s | %s | %s | %s\n", record.ID, record.Status, record.Adapter, record.Provider, record.Role, record.Repository, record.Workspace)
 	}
 	return 0
 }
@@ -188,6 +188,7 @@ func runWorkerObserve(args []string, stdout, stderr io.Writer) int {
 func runWorkerLaunch(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("worker launch", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	adapter := flags.String("adapter", worker.AdapterHost, "execution adapter: host or oci")
 	providerID := flags.String("provider", "", "provider to launch: codex, claude, or copilot")
 	role := flags.String("role", "", "worker role: discoverer, implementer, or reviewer")
 	repository := flags.String("repository", "", "Snowcat repository filter as owner/name")
@@ -209,7 +210,7 @@ func runWorkerLaunch(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	record, err := manager.Launch(context.Background(), worker.LaunchRequest{
-		Provider: *providerID, Role: *role, Repository: *repository, Source: *source, BaseRef: *baseRef,
+		Adapter: *adapter, Provider: *providerID, Role: *role, Repository: *repository, Source: *source, BaseRef: *baseRef,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "launch managed worker: %v\n", err)
@@ -273,7 +274,7 @@ func writeWorkerRecord(stdout, stderr io.Writer, record worker.Record, jsonOutpu
 		}
 		return 0
 	}
-	fmt.Fprintf(stdout, "%s %s\n", record.ID, record.Status)
+	fmt.Fprintf(stdout, "%s %s (%s)\n", record.ID, record.Status, record.Adapter)
 	fmt.Fprintf(stdout, "Workspace: %s\nBranch: %s\n", record.Workspace, record.Branch)
 	return 0
 }
@@ -611,6 +612,11 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 	return worker.New(worker.Config{
 		StateDirectory: stateDirectory,
 		NodeID:         nodeState.NodeID,
+		OCI: worker.OCIConfig{
+			Image:       os.Getenv("SNOWCAT_COCKPIT_OCI_IMAGE"),
+			CodexHome:   defaultCodexHome(),
+			GHConfigDir: defaultGHConfigDir(),
+		},
 		Ready: func(providerID string) error {
 			snapshot, err := loadProfileSnapshot(skillsDirectory, stateDirectory)
 			if err != nil {
@@ -628,6 +634,31 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 			return fmt.Errorf("unknown provider %s", providerID)
 		},
 	})
+}
+
+func defaultCodexHome() string {
+	if directory := os.Getenv("CODEX_HOME"); directory != "" {
+		return directory
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".codex")
+}
+
+func defaultGHConfigDir() string {
+	if directory := os.Getenv("GH_CONFIG_DIR"); directory != "" {
+		return directory
+	}
+	if root := os.Getenv("XDG_CONFIG_HOME"); root != "" {
+		return filepath.Join(root, "gh")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "gh")
 }
 
 func defaultStateDir() string {
@@ -676,7 +707,7 @@ func printUsage(output io.Writer) {
   snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
   snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
   snowcat-cockpit workers [--json] [--state-dir <directory>]
-  snowcat-cockpit worker launch --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+  snowcat-cockpit worker launch [--adapter host|oci] --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
   snowcat-cockpit worker observe|attach|stop|cleanup [options] <worker-id>
   snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
   snowcat-cockpit version

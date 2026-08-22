@@ -1,6 +1,6 @@
 # Spec: Managed workers
 
-This contract governs one Cockpit-owned host worker launch, its isolated Git
+This contract governs one Cockpit-owned worker launch, its isolated Git
 worktree, retained tmux terminal, local lifecycle record, and explicit stop and
 cleanup operations. The node CLI, HTTP API, and dashboard consume the same
 manager.
@@ -11,6 +11,7 @@ A launch request contains:
 
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
+| `adapter` | string | no | Exact `host` or `oci`; defaults to `host` |
 | `provider` | string | yes | Exact `codex`, `claude`, or `copilot`; its current profile is `ready` |
 | `role` | string | yes | Exact `discoverer`, `implementer`, or `reviewer` |
 | `repository` | string | yes | Snowcat `owner/name` slug |
@@ -24,6 +25,7 @@ The manager returns a non-secret record:
   "version": 1,
   "id": "worker-<hex>",
   "nodeId": "node-<hex>",
+  "adapter": "host",
   "provider": "claude",
   "role": "implementer",
   "repository": "frostyard/firn",
@@ -45,7 +47,7 @@ CLI operations:
 
 ```text
 snowcat-cockpit workers [--json] [--state-dir <directory>]
-snowcat-cockpit worker launch --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+snowcat-cockpit worker launch --adapter <host|oci> --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
 snowcat-cockpit worker observe [--json] [--state-dir <directory>] <worker-id>
 snowcat-cockpit worker attach [--state-dir <directory>] <worker-id>
 snowcat-cockpit worker stop [--state-dir <directory>] <worker-id>
@@ -102,6 +104,9 @@ HTTP operations:
     MUST allow at most one writable client, MUST attach only to the selected
     worker socket, and MUST stop with the Cockpit node without stopping tmux.
     Cockpit MUST NOT proxy, capture, or persist its terminal contents.
+13. `host` retains the interactive provider behavior above. `oci` additionally
+    MUST follow the [rootless OCI worker](oci-workers.md) contract. The adapter
+    is explicit in each request and persisted in the non-secret worker record.
 
 ## Derived artifacts
 
@@ -119,3 +124,4 @@ HTTP operations:
   [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md)
 - Context: [Cockpit node](../design/node.md)
 - Built in: [Production roadmap, Phase 3](../plans/0002-production-roadmap.md#phase-3--launch-one-managed-worker)
+- Unattended boundary: [rootless OCI workers](oci-workers.md)

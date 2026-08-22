@@ -17,6 +17,7 @@ var (
 )
 
 type Request struct {
+	Adapter    string `json:"adapter,omitempty"`
 	Provider   string `json:"provider"`
 	Role       string `json:"role"`
 	Repository string `json:"repository"`
@@ -31,6 +32,7 @@ type Failure struct {
 }
 
 type Result struct {
+	Adapter    string             `json:"adapter"`
 	Repository string             `json:"repository"`
 	Role       string             `json:"role"`
 	Provider   string             `json:"provider"`
@@ -56,6 +58,12 @@ func New(observer queueview.Observer, workers WorkerLauncher) *Controller {
 }
 
 func (controller *Controller) Launch(ctx context.Context, request Request) (Result, error) {
+	if request.Adapter == "" {
+		request.Adapter = worker.AdapterHost
+	}
+	if request.Adapter != worker.AdapterHost && request.Adapter != worker.AdapterOCI {
+		return Result{}, fmt.Errorf("%w: adapter must be host or oci", ErrInvalid)
+	}
 	role := queueview.Role(request.Role)
 	if request.Count < 1 || request.Count > MaxWorkers {
 		return Result{}, fmt.Errorf("%w: count must be between 1 and %d", ErrInvalid, MaxWorkers)
@@ -77,6 +85,7 @@ func (controller *Controller) Launch(ctx context.Context, request Request) (Resu
 	eligible := snapshot.Counts[role]
 	planned := min(request.Count, eligible)
 	result := Result{
+		Adapter:    request.Adapter,
 		Repository: request.Repository,
 		Role:       request.Role,
 		Provider:   request.Provider,
@@ -89,6 +98,7 @@ func (controller *Controller) Launch(ctx context.Context, request Request) (Resu
 	}
 	for ordinal := 1; ordinal <= planned; ordinal++ {
 		record, launchErr := controller.workers.Launch(ctx, worker.LaunchRequest{
+			Adapter:    request.Adapter,
 			Provider:   request.Provider,
 			Role:       request.Role,
 			Repository: request.Repository,

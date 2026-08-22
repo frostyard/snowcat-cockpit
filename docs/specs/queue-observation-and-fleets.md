@@ -97,6 +97,7 @@ Fleet request:
 
 ```json
 {
+  "adapter": "oci",
   "provider": "codex",
   "role": "implementer",
   "repository": "frostyard/firn",
@@ -106,7 +107,8 @@ Fleet request:
 }
 ```
 
-`count` MUST be between 1 and 12. The node takes one new snapshot inside the
+`adapter` MUST be exact `host` or `oci` and defaults to `host`. `count` MUST be
+between 1 and 12. The node takes one new snapshot inside the
 fleet request, computes `planned = min(count, eligible-for-role)`, and invokes
 the existing managed-worker launch exactly `planned` times. The result includes
 `requested`, `eligible`, `planned`, `launched`, `failures`, and the snapshot
@@ -179,6 +181,8 @@ A contract is suspicious when `requiredArtifact: pull-request` lacks
 - A batch MUST NOT refill after launch. Each worker independently claims at
   most one item through Snowcat MCP; Snowcat remains authoritative under
   concurrent nodes.
+- Every worker in a batch MUST receive the request's exact normalized adapter;
+  Cockpit MUST NOT select or change an adapter from provider or fleet size.
 - Worker correlation MUST validate the exact repository and label projection;
   it MUST fail closed on an unknown outcome or malformed match.
 
@@ -187,5 +191,6 @@ A contract is suspicious when `requiredArtifact: pull-request` lacks
 - Rationale: [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
 - Context: [Cockpit node](../design/node.md)
 - Worker lifecycle: [managed workers](managed-workers.md)
+- Unattended execution: [rootless OCI workers](oci-workers.md)
 - Upstream contracts: [observer scopes](https://github.com/frostyard/snowcat/issues/191),
   [worker correlation](https://github.com/frostyard/snowcat/issues/192)

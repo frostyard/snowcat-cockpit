@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 GO ?= go
 GOCACHE ?= /tmp/snowcat-cockpit-gocache
 
-.PHONY: build ci fmt-check test test-go test-observer-wrapper test-spike vet
+.PHONY: build ci fmt-check oci-image test test-go test-observer-wrapper test-spike vet
 
 ci: fmt-check vet test
 
@@ -28,3 +28,7 @@ test-spike:
 build:
 	mkdir -p dist
 	GOCACHE=$(GOCACHE) $(GO) build -trimpath -o dist/snowcat-cockpit ./cmd/snowcat-cockpit
+
+oci-image:
+	podman build --file oci/Containerfile --tag localhost/snowcat-cockpit-worker:codex-0.149.0 .
+	@podman image inspect localhost/snowcat-cockpit-worker:codex-0.149.0 --format 'export SNOWCAT_COCKPIT_OCI_IMAGE=sha256:{{.Id}}'

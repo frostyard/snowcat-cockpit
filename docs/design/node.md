@@ -38,12 +38,13 @@ The process owns only non-secret local state:
 It never stores terminal output, provider or MCP credentials, Snowcat lease
 tokens, or authoritative queue records.
 
-Each managed host worker has one isolated Git worktree, stable non-secret
+Each managed worker has one isolated Git worktree, stable non-secret
 worker ID, and dedicated tmux server as decided by
 [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md). The provider
 inherits the node process environment at launch. Cockpit records neither that
-environment nor terminal contents. Exited terminals and workspaces remain until
-an explicit stop or cleanup request.
+environment nor terminal contents. An OCI worker instead receives only the
+explicitly projected inputs described below. Exited terminals and workspaces
+remain until an explicit stop or cleanup request.
 
 The dashboard opens an individual terminal by starting one loopback-only ttyd
 process attached to that worker's tmux socket. The URL is runtime-only and the
@@ -59,16 +60,15 @@ skills against a locked source revision. An explicit live preflight then gives
 one provider access only to `list_work`, proves both intended role skills are
 visible, and records a coarse 15-minute receipt. A different provider's failure
 does not erase that readiness. Presence of configuration alone is never
-connection evidence. Later slices add workspace, container-isolation, trust,
-and permission checks through the same profile model.
+connection evidence. OCI launch adds its own fail-closed runtime, image, input
+metadata, and token-presence readiness checks before allocating a workspace.
 
 `doctor` is read-only: it does not create the state directory, mutate provider
 configuration, register a worker, or call `claim_work`.
 
 ## Worker profiles
 
-A worker profile binds one role and provider now, and will add an execution
-adapter,
+A worker launch binds one role, provider, and explicit execution adapter plus a
 canonical Snowcat skill set, queue selection rule, workspace policy,
 permission posture, and directory-trust posture.
 
@@ -102,16 +102,17 @@ worktree, and hides only those generated skill paths from Git through
 process-local configuration. It does not fetch or infer a remote default
 branch. Its lifecycle follows the [managed-worker contract](../specs/managed-workers.md).
 
-The OCI adapter runs one worker per container with a non-root user, a pinned
-image, an isolated workspace, and provider configuration projected through a
-separately specified ephemeral boundary. Rootless Podman is preferred when it
-is available; Docker is supported explicitly rather than selected as a claim
-about stronger isolation.
+The first OCI adapter slice runs Codex once per container with a non-root user,
+a SHA-256-pinned local image, an isolated workspace, and exact Codex and GitHub
+configuration files copied from read-only mounts into tmpfs. It supports
+rootless Podman only. Claude, Copilot, and Docker fail closed before workspace
+allocation and remain later explicit compatibility slices.
 
 The projection and unattended-permission boundary is recorded in
-[ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md). Until it
-is implemented, every launch uses the interactive host adapter and inherits its
-permission and directory-trust posture.
+[ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md) and made
+executable by the [rootless OCI worker contract](../specs/oci-workers.md).
+Adapter selection is always explicit; an omitted adapter remains interactive
+host mode for compatibility.
 
 The dashboard and state model do not depend on which adapter owns a worker.
 
@@ -181,4 +182,5 @@ Cockpit into a queue poller or treating a completed lease as a dead process.
 - Live readiness contract: [provider preflight](../specs/provider-preflight.md)
 - Queue and batch contract: [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md)
 - OCI boundary: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
+- OCI contract: [rootless OCI workers](../specs/oci-workers.md)
 - Built in: [production roadmap](../plans/0002-production-roadmap.md)

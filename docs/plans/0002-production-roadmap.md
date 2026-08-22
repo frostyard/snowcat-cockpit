@@ -160,6 +160,17 @@ and process termination remain intentionally outside its boundary.
   in host and rootless-container modes with no credential written to Cockpit
   state or back into the host provider configuration.
 
+The first executable slice is now specified and implemented for Codex on
+rootless Podman. The node accepts an explicit `host` or `oci` adapter for one
+worker or a bounded fleet, validates the pinned local image and exact private
+input-file metadata before workspace allocation, and launches a one-shot Codex
+process in a read-only, non-root container with bounded tmpfs and no runtime
+socket, host network, capabilities, or container logs. The image entrypoint
+copies provider and GitHub configuration into the ephemeral home without
+Cockpit reading or persisting it. Docker, Claude, Copilot, multi-architecture
+publication, and the host/container implementation-and-review trial remain
+before Phase 5 is complete.
+
 ## Later / ideas
 
 - Desired concurrency and explicit automatic refill.
@@ -169,10 +180,6 @@ and process termination remain intentionally outside its boundary.
 - Historical terminal transcripts with a separate retention/security decision.
 
 ## Open questions
-
-- **Provider configuration projection:** host workers currently inherit the
-  node's launch environment. Decide in Phase 5 whether OCI workers receive
-  read-only configuration through tmpfs or provider-specific mounts.
 - **Cockpit state engine:** Phase 3 keeps bounded atomic JSON records. Revisit
   SQLite only if fleet concurrency or measured history-query needs justify it.
 
@@ -182,3 +189,4 @@ and process termination remain intentionally outside its boundary.
   [node CLI and HTTP API](../specs/node-api.md)
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md)
 - Queue observation: [ADR-0004](../adr/0004-observe-snowcat-once-to-plan-bounded-fleets.md)
+- OCI isolation: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)

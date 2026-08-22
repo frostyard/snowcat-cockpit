@@ -116,6 +116,32 @@ retains the workspace; cleanup refuses a running or dirty workspace and leaves
 the branch intact. Observe makes one exact, read-only Snowcat correlation call;
 the result is displayed but never written into the worker record.
 
+For an unattended Codex worker, build the first rootless Podman image and pin
+launches to the resulting image ID:
+
+```bash
+make oci-image
+# Run the export command printed by make oci-image.
+read -rsp 'Snowcat worker token: ' SNOWCAT_MCP_TOKEN
+export SNOWCAT_MCP_TOKEN
+
+go run ./cmd/snowcat-cockpit worker launch \
+  --adapter oci \
+  --provider codex \
+  --role reviewer \
+  --repository frostyard/firn \
+  --source /path/to/local/firn
+```
+
+OCI mode currently requires Linux, rootless Podman, private regular non-symlink
+files at `${CODEX_HOME:-$HOME/.codex}/{auth.json,config.toml}` and
+`${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}/{hosts.yml,config.yml}`,
+and a current Codex profile preflight. The worker receives only those exact
+files, its worktree, and `SNOWCAT_MCP_TOKEN` by environment-variable name. Host
+mode remains the default and the interactive path for Claude and Copilot. See
+the [rootless OCI worker contract](docs/specs/oci-workers.md) for the complete
+boundary.
+
 Build a standalone binary with `make build`; the result is
 `dist/snowcat-cockpit`.
 

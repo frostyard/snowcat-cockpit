@@ -1,0 +1,27 @@
+FROM docker.io/library/node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS codex
+
+RUN npm install --global @openai/codex@0.149.0 \
+    && npm cache clean --force
+
+FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl gh git openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --home-dir /home/cockpit --shell /bin/bash --uid 1000 cockpit \
+    && install -d -o cockpit -g cockpit -m 0700 \
+      /run/cockpit/input/codex /run/cockpit/input/gh /workspace
+
+COPY --from=codex /usr/local/bin/node /usr/local/bin/node
+COPY --from=codex /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
+
+COPY --chmod=0755 oci/entrypoint.sh /usr/local/bin/cockpit-entrypoint
+
+ENV HOME=/home/cockpit \
+    CODEX_HOME=/home/cockpit/.codex \
+    GH_CONFIG_DIR=/home/cockpit/.config/gh
+
+USER 1000:1000
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/cockpit-entrypoint"]
