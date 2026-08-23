@@ -956,7 +956,7 @@ func (manager *Manager) ociArguments(record Record, image, prompt string) []stri
 	arguments = append(arguments,
 		"--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none",
 		"--tmpfs=/home/cockpit:rw,size=2g,mode=1777",
-		"--tmpfs=/tmp:rw,size=2g,mode=1777",
+		"--tmpfs=/tmp:rw,exec,size=2g,mode=1777",
 		"--tmpfs=/var/lib:rw,size=512m,mode=1777",
 		"--mount", "type=bind,source="+record.Workspace+",destination=/workspace",
 		"--mount", inputMount(filepath.Join(manager.oci.GHConfigDir, "hosts.yml"), "/run/cockpit/input/gh/hosts.yml"),

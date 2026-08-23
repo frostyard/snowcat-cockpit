@@ -395,6 +395,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		"/tools/podman", "--pull=never", "--read-only", "--read-only-tmpfs=false",
 		"--userns=keep-id:uid=1000,gid=1000", "--cap-drop=ALL",
 		"--security-opt=no-new-privileges", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none", "--env",
+		"--tmpfs=/tmp:rw,exec,size=2g,mode=1777",
 		"SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, OCIModelReview, record.Workspace, codexHome, ghConfig,
 	} {
 		if !strings.Contains(argv, required) {
@@ -578,6 +579,7 @@ func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
 	for _, required := range []string{
 		"/tools/docker", "--pull=never", "--read-only", "--user=1000:1000",
 		"--cap-drop=ALL", "--security-opt=no-new-privileges=true", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none",
+		"--tmpfs=/tmp:rw,exec,size=2g,mode=1777",
 		"--add-host", "snowcat.goat-snake.ts.net:100.108.168.44", "readonly", "SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, record.Workspace,
 	} {
 		if !strings.Contains(argv, required) {

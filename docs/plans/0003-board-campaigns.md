@@ -85,6 +85,9 @@ and tells every role to claim and renew a 3600-second lease around long
 execution steps. An
 explicit dashboard action correlates active workers and highlights the
 authoritative Snowcat `expired` outcome without giving Cockpit a lease token.
+The same trial proved that Snowcat's deploy tests execute command stubs from
+`os.tmpdir()`; Cockpit's bounded `/tmp` tmpfs is now executable so the tests do
+not skip those stubs and accidentally invoke real tools.
 
 ## Later / ideas
 

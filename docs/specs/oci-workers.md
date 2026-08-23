@@ -115,9 +115,10 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    `/workspace` and the provider's exact input files read-only below
    `/run/cockpit/input`. The container home and `/tmp` MUST be bounded 2 GiB
    tmpfs mounts, and test scratch at `/var/lib` MUST be a bounded 512 MiB tmpfs
-   mount. Copilot's native package cache MUST be a nested, executable 512 MiB
-   tmpfs while the rest of its home remains non-executable. The tmpfs roots
-   MAY be mode `1777` for rootless-runtime
+   mount. `/tmp` MUST be executable because repository test contracts create
+   bounded command fixtures there. Copilot's native package cache MUST be a
+   nested, executable 512 MiB tmpfs while the rest of its home remains
+   non-executable. The tmpfs roots MAY be mode `1777` for rootless-runtime
    portability; the non-root entrypoint MUST create the actual provider and
    GitHub configuration directories as mode `0700` beneath it.
 5. The runtime receives `--env SNOWCAT_MCP_TOKEN` and `--env GH_TOKEN` with no
