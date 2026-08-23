@@ -197,7 +197,10 @@ function renderCampaign(record) {
     if (record.request.discoverer?.provider === record.request.implementer?.provider) {
       byId("campaign-work-provider").value = record.request.discoverer.provider;
     }
-    if (record.request.reviewer?.provider) byId("campaign-review-provider").value = record.request.reviewer.provider;
+    const reviewProvider = byId("campaign-review-provider");
+    if (Array.from(reviewProvider.options).some((option) => option.value === record.request.reviewer?.provider)) {
+      reviewProvider.value = record.request.reviewer.provider;
+    }
     if (record.request.discoverer?.capacity) byId("campaign-discoverers").value = String(record.request.discoverer.capacity);
     if (record.request.implementer?.capacity) byId("campaign-implementers").value = String(record.request.implementer.capacity);
     if (record.request.reviewer?.capacity) byId("campaign-reviewers").value = String(record.request.reviewer.capacity);

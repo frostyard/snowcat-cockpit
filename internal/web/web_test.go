@@ -293,6 +293,14 @@ func TestRoutes(t *testing.T) {
 		if !strings.Contains(response.Body.String(), "Start all enrolled repositories") {
 			t.Fatal("dashboard multi-repository campaign control is missing")
 		}
+		if !strings.Contains(response.Body.String(), `<label>Review<select id="campaign-review-provider"><option value="claude" selected>`) {
+			t.Fatal("dashboard reviewer lane does not default to Claude")
+		}
+		reviewerSelect := response.Body.String()[strings.Index(response.Body.String(), `id="campaign-review-provider"`):]
+		reviewerSelect = reviewerSelect[:strings.Index(reviewerSelect, `</select>`)]
+		if strings.Contains(reviewerSelect, `value="copilot"`) {
+			t.Fatal("dashboard still admits Copilot into the reviewer lane")
+		}
 		for _, marker := range []string{"campaign-active-workers", "campaign-launched-workers", "campaign-last-observed", "workers-observe-active"} {
 			if !strings.Contains(response.Body.String(), marker) {
 				t.Fatalf("dashboard campaign activity marker %q is missing", marker)

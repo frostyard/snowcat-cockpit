@@ -396,7 +396,7 @@ func Classify(kind string) Role {
 		return RoleDiscoverer
 	case kind == "pr-review":
 		return RoleReviewer
-	case kind == "release-needed":
+	case kind == "release-needed", kind == "pr-cure", kind == "pr-cure-change", kind == "pr-review-fix":
 		return RoleUnassigned
 	default:
 		return RoleImplementer

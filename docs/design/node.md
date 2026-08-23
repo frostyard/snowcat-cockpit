@@ -79,9 +79,10 @@ The initial roles are:
   explicitly declare Snowcat's delivery contract; operator admission remains
   in Snowcat.
 - **Implementer:** derives exact kinds from the live queue and accepts every
-  worker kind except `*-discovery`, exact `pr-review`, and human-operated
-  `release-needed`. This preserves Snowcat's open kind taxonomy, including
-  `implementation`, `issue-resolution`, `pr-review-fix`, cures, and fixes.
+  worker kind except `*-discovery`, exact `pr-review`, `pr-review-fix`,
+  `pr-cure`, `pr-cure-change`, and human-operated `release-needed`. The cure
+  and review-fix exclusions remain until Cockpit can target a claimed item's
+  bound pull-request branch; other future worker kinds remain eligible.
 - **Reviewer:** receives only exact `pr-review` and uses Snowcat's canonical
   review-only lifecycle.
 

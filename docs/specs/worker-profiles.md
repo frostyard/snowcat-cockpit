@@ -66,7 +66,7 @@ MCP starts `unchecked`; a current successful
 | Role | Canonical skill | Queue selection |
 | --- | --- | --- |
 | `discoverer` | `work-snowcat-queue` | Kinds ending in `-discovery` only; read-only assessment with at most one proposed child |
-| `implementer` | `work-snowcat-queue` | Kinds ending in `-fix`, plus exact `pr-cure` and `pr-cure-change`; never exact `pr-review` |
+| `implementer` | `work-snowcat-queue` | Every non-discovery worker kind except exact `pr-review`, `pr-review-fix`, `pr-cure`, `pr-cure-change`, and `release-needed` |
 | `reviewer` | `review-snowcat-queue` | Exact `pr-review` only |
 
 The locked kit also carries `work-snowcat-without-reviews` for canonical

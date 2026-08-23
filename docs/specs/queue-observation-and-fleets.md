@@ -177,13 +177,16 @@ Classification is deterministic and case-sensitive:
 | --- | --- |
 | suffix `-discovery` | `discoverer` |
 | exact `pr-review` | `reviewer` |
+| exact `pr-cure`, `pr-cure-change`, or `pr-review-fix` | `unassigned` (temporarily unsupported by Cockpit workers) |
 | exact `release-needed` | `unassigned` (human-operated) |
 | every other kind | `implementer` |
 
 The implementer rule is exclusion-based because Snowcat work kinds are open:
-`implementation`, `issue-resolution`, `pr-review-fix`, cures, fixes, and future
-worker kinds remain eligible. Cockpit does not turn the human-operated
-`release-needed` preparation item into fleet capacity.
+`implementation`, `issue-resolution`, fixes other than `pr-review-fix`, and
+future worker kinds remain eligible. Cockpit does not turn the human-operated
+`release-needed` preparation item into fleet capacity. Until Cockpit can target
+the pull-request branch bound to a claimed item, `pr-cure`, `pr-cure-change`,
+and `pr-review-fix` also remain outside implementer capacity.
 
 A contract is suspicious when `requiredArtifact: pull-request` lacks
 `open-pr`, or when `write` authority does not carry both `open-pr` and

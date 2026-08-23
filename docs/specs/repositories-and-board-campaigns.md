@@ -55,9 +55,13 @@ is:
   "intervalSeconds": 30,
   "discoverer": {"provider": "claude", "mcpServer": "snowcat", "capacity": 4},
   "implementer": {"provider": "claude", "mcpServer": "snowcat", "capacity": 4},
-  "reviewer": {"provider": "copilot", "mcpServer": "snowcat-mcp", "capacity": 4}
+  "reviewer": {"provider": "claude", "mcpServer": "snowcat", "capacity": 4}
 }
 ```
+
+The dashboard offers Claude and Codex for the reviewer lane. Copilot remains
+out of that lane until an acceptance run demonstrates terminal Snowcat review
+lifecycle completion.
 
 | Input | Constraints |
 | --- | --- |
