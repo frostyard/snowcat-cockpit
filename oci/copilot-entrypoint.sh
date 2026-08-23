@@ -6,6 +6,8 @@ if [[ $# -ne 2 ]]; then
   exit 64
 fi
 
+ulimit -c 0
+
 umask 077
 install -d -m 0700 "$COPILOT_HOME" "$GH_CONFIG_DIR"
 install -m 0600 /run/cockpit/input/copilot/mcp-config.json "$COPILOT_HOME/mcp-config.json"

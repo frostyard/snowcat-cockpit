@@ -2,8 +2,12 @@
 set -euo pipefail
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly CODEX_ENTRYPOINT="$PROJECT_ROOT/oci/entrypoint.sh"
+readonly CODEX_CONTAINERFILE="$PROJECT_ROOT/oci/Containerfile"
 readonly CLAUDE_ENTRYPOINT="$PROJECT_ROOT/oci/claude-entrypoint.sh"
 readonly CLAUDE_CONTAINERFILE="$PROJECT_ROOT/oci/Claude.Containerfile"
+readonly COPILOT_ENTRYPOINT="$PROJECT_ROOT/oci/copilot-entrypoint.sh"
+readonly COPILOT_CONTAINERFILE="$PROJECT_ROOT/oci/Copilot.Containerfile"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -22,5 +26,12 @@ assert_contains "$CLAUDE_ENTRYPOINT" 'for skill in work-snowcat-queue work-snowc
 assert_contains "$CLAUDE_ENTRYPOINT" '[[ -f "$source_skill" && ! -L "$source_skill" ]]'
 assert_contains "$CLAUDE_CONTAINERFILE" 'COPY --chmod=0644 oci/claude-system-prompt.txt /usr/local/share/snowcat-cockpit/claude-system-prompt.txt'
 assert_contains "$CLAUDE_CONTAINERFILE" 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1'
+for entrypoint in "$CODEX_ENTRYPOINT" "$CLAUDE_ENTRYPOINT" "$COPILOT_ENTRYPOINT"; do
+  assert_contains "$entrypoint" 'ulimit -c 0'
+done
+for containerfile in "$CODEX_CONTAINERFILE" "$CLAUDE_CONTAINERFILE" "$COPILOT_CONTAINERFILE"; do
+  assert_contains "$containerfile" 'node:26-bookworm-slim@sha256:cd565714d4da3e84bfd341e31448f81d47c6362198f152345297c9c1154e6341'
+  assert_contains "$containerfile" '/usr/local/bin/npm'
+done
 
 printf 'PASS: OCI entrypoints\n'

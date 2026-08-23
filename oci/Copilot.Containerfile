@@ -1,3 +1,5 @@
+FROM docker.io/library/node:26-bookworm-slim@sha256:cd565714d4da3e84bfd341e31448f81d47c6362198f152345297c9c1154e6341 AS node
+
 FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS copilot
 
 ARG TARGETARCH=amd64
@@ -41,6 +43,10 @@ RUN apt-get update \
     && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
 COPY --from=copilot /usr/local/bin/copilot /usr/local/bin/copilot
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 COPY --chmod=0755 oci/copilot-entrypoint.sh /usr/local/bin/cockpit-entrypoint
 
 ENV HOME=/home/cockpit \

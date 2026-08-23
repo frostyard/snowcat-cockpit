@@ -708,13 +708,14 @@ func (manager *Manager) AttachCommand(ctx context.Context, workerID string) (Com
 }
 
 func BuildPrompt(workerID, role, repository string) string {
+	leaseDiscipline := "Request leaseSeconds 3600 when claiming. Immediately after a claim, call heartbeat_work with leaseSeconds 3600. Call heartbeat_work with leaseSeconds 3600 before and after every install, build, test, or network step; do not begin another step when ten minutes have passed since the last successful heartbeat. If a heartbeat reports that the lease is no longer active, stop immediately without further repository or GitHub mutation."
 	if role == "discoverer" {
-		return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only kinds ending in -discovery for repository %s. Claim at most one item. Treat it as read-only discovery: do not edit files or open a GitHub artifact. Complete with concrete evidence and at most one bounded follow-up when justified. Every follow-up must declare requiredArtifact: use pull-request with write and open-pr for a change, or none for read-only work. Report the result to Snowcat, then stop.", workerID, repository)
+		return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only kinds ending in -discovery for repository %s. Claim at most one item. %s Treat it as read-only discovery: do not edit files or open a GitHub artifact. Complete with concrete evidence and at most one bounded follow-up when justified. Every follow-up must declare requiredArtifact: use pull-request with write and open-pr for a change, or none for read-only work. Report the result to Snowcat, then stop.", workerID, repository, leaseDiscipline)
 	}
 	if role == "reviewer" {
-		return fmt.Sprintf("Use the review-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only pr-review items for repository %s. Claim at most one item, report its structured verdict to Snowcat, then stop.", workerID, repository)
+		return fmt.Sprintf("Use the review-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only pr-review items for repository %s. Claim at most one item. %s Report its structured verdict to Snowcat, then stop.", workerID, repository, leaseDiscipline)
 	}
-	return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. For repository %s, list queued work once and claimed work once. Derive the exact claimable kind set from queued items plus claimed items whose newest attempt outcome is expired, excluding kinds ending in -discovery, exact pr-review, and exact release-needed, and claim at most one item with only that set. Do not use a fixed implementation-kind whitelist; implementation, issue-resolution, pr-review-fix, cures, fixes, and future worker kinds are eligible. release-needed remains human-operated. The workspace is already isolated on a Cockpit-owned branch: do not create, rename, or switch branches. Before substantive work on any change item, require both open-pr in allowedActions and requiredArtifact pull-request; if either is absent, release the item immediately as undeliverable and stop. When both are present, they are explicit operator authorization to commit, push the current branch, and open the required draft pull request without asking for further permission. Complete the item within its allowed actions, report the commit and pull-request artifacts to Snowcat, then stop.", workerID, repository)
+	return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. For repository %s, list queued work once and claimed work once. Derive the exact claimable kind set from queued items plus claimed items whose newest attempt outcome is expired, excluding kinds ending in -discovery, exact pr-review, and exact release-needed, and claim at most one item with only that set. %s Do not use a fixed implementation-kind whitelist; implementation, issue-resolution, pr-review-fix, cures, fixes, and future worker kinds are eligible. release-needed remains human-operated. The workspace is already isolated on a Cockpit-owned branch: do not create, rename, or switch branches. Before substantive work on any change item, require both open-pr in allowedActions and requiredArtifact pull-request; if either is absent, release the item immediately as undeliverable and stop. When both are present, they are explicit operator authorization to commit, push the current branch, and open the required draft pull request without asking for further permission. Complete the item within its allowed actions, report the commit and pull-request artifacts to Snowcat, then stop.", workerID, repository, leaseDiscipline)
 }
 
 func validateRequest(request *LaunchRequest) error {
@@ -953,7 +954,7 @@ func (manager *Manager) ociArguments(record Record, image, prompt string) []stri
 		}
 	}
 	arguments = append(arguments,
-		"--pids-limit=512", "--log-driver=none",
+		"--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none",
 		"--tmpfs=/home/cockpit:rw,size=2g,mode=1777",
 		"--tmpfs=/tmp:rw,size=2g,mode=1777",
 		"--tmpfs=/var/lib:rw,size=512m,mode=1777",

@@ -94,7 +94,11 @@ HTTP operations:
    current branch. When `open-pr` and `requiredArtifact: pull-request` are both present,
    Cockpit's prompt MUST state that the operator has authorized committing,
    pushing that branch, and opening the required draft pull request without a
-   second permission prompt.
+   second permission prompt. Every role prompt MUST request a 3600-second
+   claim lease, renew it immediately after claim, and renew it before and after
+   installs, builds, tests, and network steps. A worker that learns its lease
+   is no longer active MUST stop before any further repository or GitHub
+   mutation.
 4. Each worker MUST use the dedicated tmux topology from
    [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md) with
    `remain-on-exit` enabled before the provider starts.
@@ -117,7 +121,10 @@ HTTP operations:
 11. Work observation MUST be explicit, MUST follow the
     [queue observation contract](queue-observation-and-fleets.md), and MUST NOT
     modify the worker record. Process state and Snowcat attempt state are
-    independent.
+    independent. After an explicit observation, the dashboard MUST present an
+    expired Snowcat attempt beside a still-running provider process as a
+    lease/process conflict rather than treating either state as the other's
+    outcome.
 12. The dashboard console MUST bind ttyd to the platform loopback interface,
     MUST allow at most one writable client, MUST attach only to the selected
     worker socket, and MUST stop with the Cockpit node without stopping tmux.

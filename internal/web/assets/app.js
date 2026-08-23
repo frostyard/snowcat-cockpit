@@ -8,6 +8,7 @@ let latestSnapshot = null;
 let latestWorkers = [];
 let latestRepositories = [];
 let latestCampaign = null;
+let observingActiveWorkers = false;
 const workerObservations = new Map();
 
 function formatUptime() {
@@ -490,6 +491,30 @@ async function observeWorker(workerId) {
   renderWorkers(latestWorkers);
 }
 
+async function observeActiveWorkers() {
+  const button = byId("workers-observe-active");
+  const activeWorkers = latestWorkers.filter((worker) => ["running", "allocating"].includes(worker.status));
+  observingActiveWorkers = true;
+  button.disabled = true;
+  for (const worker of activeWorkers) {
+    workerObservations.set(worker.id, {
+      status: "checking",
+      detail: "Taking one exact Snowcat observation…",
+    });
+  }
+  renderWorkers(latestWorkers);
+  await Promise.all(activeWorkers.map(async (worker) => {
+    try {
+      const observation = await requestJSON(`/api/v1/workers/${worker.id}/observe`, { method: "POST" });
+      workerObservations.set(worker.id, observation);
+    } catch (error) {
+      workerObservations.set(worker.id, { status: "error", detail: error.message });
+    }
+  }));
+  observingActiveWorkers = false;
+  renderWorkers(latestWorkers);
+}
+
 function renderWorkers(records) {
   const tbody = byId("workers-body");
   tbody.replaceChildren();
@@ -504,6 +529,9 @@ function renderWorkers(records) {
   }
   for (const worker of records) {
     const row = document.createElement("tr");
+    const observation = workerObservations.get(worker.id);
+    const leaseConflict = ["running", "allocating"].includes(worker.status) && observation?.status === "expired";
+    if (leaseConflict) row.className = "ph-worker-lease-conflict";
     const identity = document.createElement("td");
     const name = document.createElement("div");
     name.className = "ph-name";
@@ -515,13 +543,16 @@ function renderWorkers(records) {
     identity.append(name);
 
     const state = document.createElement("td");
-    state.append(badge(worker.status));
-    const observation = workerObservations.get(worker.id);
+    const processBadge = badge(worker.status);
+    if (leaseConflict) processBadge.className = "ph-badge danger";
+    state.append(processBadge);
     if (observation) {
       const workState = document.createElement("small");
-      workState.className = "ph-work-state";
+      workState.className = `ph-work-state${leaseConflict ? " danger" : ""}`;
       const item = observation.itemId ? ` · ${observation.itemId.slice(0, 8)}` : "";
-      workState.textContent = `work ${observation.status}${item}`;
+      workState.textContent = leaseConflict
+        ? `lease expired · process still running${item}`
+        : `work ${observation.status}${item}`;
       workState.title = observation.detail;
       state.append(workState);
     }
@@ -568,12 +599,15 @@ function renderWorkers(records) {
     tbody.append(row);
   }
   const active = records.filter((worker) => ["running", "allocating"].includes(worker.status)).length;
+  const leaseConflicts = records.filter((worker) =>
+    ["running", "allocating"].includes(worker.status) && workerObservations.get(worker.id)?.status === "expired").length;
   const retained = records.filter((worker) => worker.status !== "cleaned").length;
   const workersBadge = byId("workers-badge");
-  workersBadge.className = `ph-badge ${active ? "ok" : ""}`;
-  workersBadge.textContent = `${active} active`;
+  workersBadge.className = `ph-badge ${leaseConflicts ? "danger" : active ? "ok" : ""}`;
+  workersBadge.textContent = leaseConflicts ? `${leaseConflicts} lease lost` : `${active} active`;
+  byId("workers-observe-active").disabled = active === 0 || observingActiveWorkers;
   byId("workers-summary").textContent = retained
-    ? `${retained} retained ${retained === 1 ? "workspace" : "workspaces"} · explicit cleanup only`
+    ? `${retained} retained ${retained === 1 ? "workspace" : "workspaces"}${leaseConflicts ? ` · ${leaseConflicts} running without an active lease` : ""} · explicit cleanup only`
     : "No retained workspaces";
 }
 
@@ -837,6 +871,7 @@ byId("fleet-adapter").addEventListener("change", () => {
   syncRuntime("fleet");
 });
 byId("queue-form").addEventListener("submit", observeQueue);
+byId("workers-observe-active").addEventListener("click", observeActiveWorkers);
 loadHealth();
 loadChecks();
 loadProfiles();

@@ -6,6 +6,8 @@ if [[ $# -ne 2 ]]; then
   exit 64
 fi
 
+ulimit -c 0
+
 umask 077
 install -d -m 0700 "$CLAUDE_CONFIG_DIR" "$CLAUDE_CONFIG_DIR/skills" "$GH_CONFIG_DIR"
 install -m 0600 /run/cockpit/input/claude/.credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json"

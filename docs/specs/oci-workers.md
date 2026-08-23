@@ -63,7 +63,7 @@ Build all local images with `make oci-image`, or one with
 `make oci-image-copilot`. Build the corresponding images in Docker's distinct
 local store with `make docker-image` or `make docker-image-<provider>`. The
 image sources pin Codex CLI `0.149.0`, Claude
-Code `2.1.239`, Copilot CLI `1.0.80`, Go `1.26.6`, multi-architecture
+Code `2.1.239`, Copilot CLI `1.0.80`, Go `1.26.6`, Node.js `26`, multi-architecture
 base-image manifest digests, and the official amd64/arm64 provider release
 checksums. Launch uses a pre-existing image with `--pull=never`.
 
@@ -101,7 +101,9 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    Cockpit MUST inspect metadata only; it MUST NOT read or parse their content.
 3. Both runtime invocations MUST use `--rm`, `--pull=never`, `--read-only`,
    non-root UID/GID 1000, `--cap-drop=ALL`,
-   `no-new-privileges`, a bounded PID limit, and no container log driver.
+   `no-new-privileges`, a four-CPU quota, a 1024-PID limit, a zero core-file
+   ulimit, and no container log driver. Every image entrypoint MUST also
+   disable core files before invoking its provider.
    Podman additionally MUST use `--userns=keep-id` and disable its implicit
    read-only tmpfs behavior. Docker MUST use neither Podman-only flag.
    A configured Docker host mapping MUST contain one bounded hostname and IPv4

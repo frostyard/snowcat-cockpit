@@ -72,6 +72,20 @@ records the durable corrections: observe Snowcat's expired-attempt projection
 alongside queued work, and disable background tasks in the unattended Claude
 image.
 
+A follow-on Snowcat campaign exposed a second, independent overrun path. Four
+foreground Claude providers remained alive after two 15-minute attempts
+expired without a successful heartbeat. The Claude image did not contain the
+Node.js baseline, so each worker downloaded its own Node.js 24 toolchain before
+testing. Snowcat's parallel coverage suite then crossed the OCI adapter's
+512-PID ceiling hundreds of times (`pids.events:max`), causing Node processes
+to abort and emit dozens of large core files into retained workspaces. Cockpit
+now preinstalls Node.js 26 and npm in every provider image, gives bounded test
+workloads a four-CPU quota and measured 1024-PID ceiling, disables core files,
+and tells every role to claim and renew a 3600-second lease around long
+execution steps. An
+explicit dashboard action correlates active workers and highlights the
+authoritative Snowcat `expired` outcome without giving Cockpit a lease token.
+
 ## Later / ideas
 
 - Import repository slugs from Snowcat if it adds a scoped enrollment-read MCP

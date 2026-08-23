@@ -394,7 +394,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 	for _, required := range []string{
 		"/tools/podman", "--pull=never", "--read-only", "--read-only-tmpfs=false",
 		"--userns=keep-id:uid=1000,gid=1000", "--cap-drop=ALL",
-		"--security-opt=no-new-privileges", "--log-driver=none", "--env",
+		"--security-opt=no-new-privileges", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none", "--env",
 		"SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, OCIModelReview, record.Workspace, codexHome, ghConfig,
 	} {
 		if !strings.Contains(argv, required) {
@@ -577,7 +577,7 @@ func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
 	argv := strings.Join(launch.Arguments, "\n")
 	for _, required := range []string{
 		"/tools/docker", "--pull=never", "--read-only", "--user=1000:1000",
-		"--cap-drop=ALL", "--security-opt=no-new-privileges=true", "--log-driver=none",
+		"--cap-drop=ALL", "--security-opt=no-new-privileges=true", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none",
 		"--add-host", "snowcat.goat-snake.ts.net:100.108.168.44", "readonly", "SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, record.Workspace,
 	} {
 		if !strings.Contains(argv, required) {
@@ -927,19 +927,19 @@ func TestBuildPromptPinsRoleSelections(t *testing.T) {
 	t.Parallel()
 
 	discoverer := BuildPrompt("worker-1234567890abcdef", "discoverer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "only kinds ending in -discovery", "read-only discovery", "requiredArtifact", "open-pr", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "only kinds ending in -discovery", "read-only discovery", "requiredArtifact", "open-pr", "leaseSeconds 3600", "Immediately after a claim", "at most one"} {
 		if !strings.Contains(discoverer, expected) {
 			t.Fatalf("discoverer prompt missing %q: %s", expected, discoverer)
 		}
 	}
 	implementer := BuildPrompt("worker-1234567890abcdef", "implementer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery", "exact pr-review", "exact release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix", "do not create, rename, or switch branches", "requiredArtifact pull-request", "explicit operator authorization", "push the current branch", "without asking for further permission", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery", "exact pr-review", "exact release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix", "do not create, rename, or switch branches", "requiredArtifact pull-request", "explicit operator authorization", "push the current branch", "without asking for further permission", "leaseSeconds 3600", "before and after every install, build, test, or network step", "lease is no longer active", "at most one"} {
 		if !strings.Contains(implementer, expected) {
 			t.Fatalf("implementer prompt missing %q: %s", expected, implementer)
 		}
 	}
 	reviewer := BuildPrompt("worker-1234567890abcdef", "reviewer", "frostyard/firn")
-	if !strings.Contains(reviewer, "review-snowcat-queue") || !strings.Contains(reviewer, "only pr-review") {
+	if !strings.Contains(reviewer, "review-snowcat-queue") || !strings.Contains(reviewer, "only pr-review") || !strings.Contains(reviewer, "leaseSeconds 3600") {
 		t.Fatalf("reviewer prompt = %s", reviewer)
 	}
 }
