@@ -70,15 +70,18 @@ newest Snowcat attempt is expired. Cockpit reads both bounded projections and
 uses Snowcat's attempt outcome; it never computes lease expiry or requeues the
 item itself.
 
-Exited workers do not prove that Snowcat work completed. Attempt correlation is
-an independent, delayed observation and may remain unmatched. Fresh queue state
-is the only input to later capacity decisions.
+Exited workers do not prove that Snowcat work completed. Cockpit retains a
+campaign worker probe after startup and performs one exact, read-only Snowcat
+attempt correlation when the provider exits. A terminal outcome permits lane
+refill. An active claimed attempt fails and backs off the whole role lane,
+regardless of what the provider printed before exit. An unmatched worker that
+survived startup is a normal no-claim exit; an unmatched startup exit remains a
+launch failure. If correlation itself fails, refill pauses and the lane remains
+degraded until a later reconciliation can determine the outcome.
 
-A newly launched worker remains under a startup probe until one later
-reconciliation observes it running. If it exits or loses its retained terminal
-before that point, the controller applies the existing five-minute
-repository/role launch backoff. This bounds a broken provider or container
-entrypoint without interpreting the exit as a queue result.
+Campaign state records only the coarse lane failure on its repository status.
+The correlated Snowcat item, attempt, and derived outcome remain request-local
+and are never written to worker or campaign state.
 
 ### Lifecycle
 

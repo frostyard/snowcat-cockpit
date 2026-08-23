@@ -109,18 +109,24 @@ execution-side signals do not infer a Snowcat work outcome.
    campaign's exact adapter, runtime, and lane provider. The worker independently
    claims at most one item through Snowcat MCP.
 7. A setup, preflight, observation, or launch failure records only a sanitized
-   message. Setup, preflight, and launch retry no sooner than five minutes. A
-   campaign worker that exits before surviving its first later reconciliation
-   is a launch failure for backoff purposes only; it does not prove a Snowcat
-   outcome.
+   message. Setup, preflight, and launch retry no sooner than five minutes.
+   Cockpit tracks every campaign worker through provider exit and then performs
+   one exact, read-only Snowcat attempt correlation. A terminal Snowcat outcome
+   or an unmatched stabilized worker permits refill. An active `claimed`
+   attempt, an ambiguous correlation, or an unmatched worker that never
+   stabilized fails the role lane and backs it off for at least five minutes.
+   A failed correlation call leaves the lane degraded and pauses refill until
+   a later reconciliation can determine the outcome.
 8. Empty queue observations leave the campaign running. Human proposal
    admission and delayed pull-request verification may add later work.
 9. After each reconciliation, the top-level campaign status MUST be `degraded`
    while any current repository or provider status is degraded. Its detail
    MUST direct the operator to those blockers while ready lanes continue.
    `refresh-needed` on an idle lane is not a blocker.
-10. Stop and process shutdown MUST NOT stop a worker, delete a source, delete a
-   workspace, or infer a Snowcat outcome from provider exit.
+10. Stop and process shutdown MUST NOT stop a worker, delete a source, or delete
+    a workspace. Cockpit MUST NOT infer a Snowcat outcome from provider exit;
+    it uses only the exact attempt correlation and MUST NOT persist the returned
+    item, attempt, or derived outcome in campaign state.
 11. On node restart, a previously active durable record becomes `stopped` with
     an interrupted detail. The node MUST NOT resume launches automatically.
 

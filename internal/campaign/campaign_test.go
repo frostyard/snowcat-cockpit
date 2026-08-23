@@ -50,16 +50,38 @@ func (preflights *fakePreflights) Refresh(_ context.Context, provider, server, r
 }
 
 type fakeQueue struct {
-	counts map[string]map[queueview.Role]int
+	mu           sync.Mutex
+	counts       map[string]map[queueview.Role]int
+	attempts     map[string]queueview.WorkerObservation
+	attemptErr   map[string]error
+	attemptCalls []string
 }
 
 func (queue *fakeQueue) Observe(_ context.Context, repository string) (queueview.Snapshot, error) {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 	counts := map[queueview.Role]int{
 		queueview.RoleDiscoverer:  queue.counts[repository][queueview.RoleDiscoverer],
 		queueview.RoleImplementer: queue.counts[repository][queueview.RoleImplementer],
 		queueview.RoleReviewer:    queue.counts[repository][queueview.RoleReviewer],
 	}
 	return queueview.Snapshot{Repository: repository, Counts: counts, ObservedAt: time.Now().UTC()}, nil
+}
+
+func (queue *fakeQueue) ObserveWorker(_ context.Context, repository, workerID string) (queueview.WorkerObservation, error) {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	queue.attemptCalls = append(queue.attemptCalls, repository+"/"+workerID)
+	if err := queue.attemptErr[workerID]; err != nil {
+		return queueview.WorkerObservation{}, err
+	}
+	if observed, exists := queue.attempts[workerID]; exists {
+		return observed, nil
+	}
+	return queueview.WorkerObservation{
+		WorkerID: workerID, Repository: repository, Status: "unmatched",
+		Detail: "no Snowcat attempt matched this worker",
+	}, nil
 }
 
 type fakeWorkers struct {
@@ -299,6 +321,7 @@ func TestCampaignDoesNotBackOffWorkerAfterLaunchStabilizes(t *testing.T) {
 	workers.records[0].Status = worker.StatusExited
 	workers.mu.Unlock()
 	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
 
 	workers.mu.Lock()
 	defer workers.mu.Unlock()
@@ -307,6 +330,111 @@ func TestCampaignDoesNotBackOffWorkerAfterLaunchStabilizes(t *testing.T) {
 	}
 	if controller.inBackoff(repository.Repository, queueview.RoleReviewer) {
 		t.Fatal("stable worker exit unexpectedly entered launch backoff")
+	}
+}
+
+func TestCampaignFailsStableLaneWhenProviderExitsWithClaimedAttempt(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	workerID := "worker-0000000000000001"
+	queue := &fakeQueue{
+		counts: map[string]map[queueview.Role]int{
+			repository.Repository: {queueview.RoleReviewer: 1},
+		},
+		attempts: map[string]queueview.WorkerObservation{
+			workerID: {WorkerID: workerID, Repository: repository.Repository, Status: "claimed", Detail: "Snowcat reports an active lease for this worker"},
+		},
+	}
+	workers := &fakeWorkers{launchStatus: worker.StatusRunning}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, workers)
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	workers.mu.Lock()
+	workers.records[0].Status = worker.StatusExited
+	workers.mu.Unlock()
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusDegraded || len(record.Repositories) != 1 || record.Repositories[0].Status != StatusDegraded {
+		t.Fatalf("campaign = %#v, want degraded lane failure", record)
+	}
+	wantDetail := "reviewer lane failed: provider exited without a terminal Snowcat outcome; retry is backed off"
+	if record.Repositories[0].Detail != wantDetail {
+		t.Fatalf("detail = %q, want %q", record.Repositories[0].Detail, wantDetail)
+	}
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if len(workers.launched) != 1 {
+		t.Fatalf("launches = %d, want no refill after claimed exit", len(workers.launched))
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if len(queue.attemptCalls) != 1 {
+		t.Fatalf("attempt observations = %q, want one", queue.attemptCalls)
+	}
+}
+
+func TestCampaignPausesLaneUntilExitedWorkerOutcomeCanBeObserved(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	workerID := "worker-0000000000000001"
+	queue := &fakeQueue{
+		counts: map[string]map[queueview.Role]int{
+			repository.Repository: {queueview.RoleReviewer: 1},
+		},
+		attemptErr: map[string]error{workerID: errors.New("observation unavailable")},
+	}
+	workers := &fakeWorkers{launchStatus: worker.StatusRunning}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, workers)
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	workers.mu.Lock()
+	workers.records[0].Status = worker.StatusExited
+	workers.mu.Unlock()
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusDegraded || record.Repositories[0].Detail != "reviewer worker exit outcome observation failed; lane refill is paused" {
+		t.Fatalf("campaign = %#v, want paused exit reconciliation", record)
+	}
+	workers.mu.Lock()
+	if len(workers.launched) != 1 {
+		workers.mu.Unlock()
+		t.Fatalf("launches = %d, want lane held", len(workers.launched))
+	}
+	workers.mu.Unlock()
+
+	queue.mu.Lock()
+	delete(queue.attemptErr, workerID)
+	queue.attempts = map[string]queueview.WorkerObservation{
+		workerID: {WorkerID: workerID, Repository: repository.Repository, Status: "completed", Detail: "Snowcat reports this worker attempt as completed"},
+	}
+	queue.mu.Unlock()
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if len(workers.launched) != 2 {
+		t.Fatalf("launches = %d, want refill after terminal outcome", len(workers.launched))
 	}
 }
 
@@ -336,7 +464,7 @@ func TestNewMarksAnActiveCampaignInterrupted(t *testing.T) {
 	}
 }
 
-func newTestController(t *testing.T, repositories RepositoryCatalog, preflights Preflighter, queue queueview.Observer, workers WorkerManager) *Controller {
+func newTestController(t *testing.T, repositories RepositoryCatalog, preflights Preflighter, queue QueueObserver, workers WorkerManager) *Controller {
 	t.Helper()
 	controller, err := New(Config{
 		StateDirectory: t.TempDir(), Repositories: repositories, Preflights: preflights,
