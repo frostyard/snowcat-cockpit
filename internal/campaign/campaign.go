@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -486,15 +487,33 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		})
 	}
 
-	for _, role := range []queueview.Role{queueview.RoleDiscoverer, queueview.RoleImplementer, queueview.RoleReviewer} {
+	roles := []queueview.Role{queueview.RoleDiscoverer, queueview.RoleImplementer, queueview.RoleReviewer}
+	eligibleByRole := make(map[queueview.Role]int, len(roles))
+	providerEligible := make(map[string]bool)
+	for _, role := range roles {
 		lane := controller.lane(role)
-		eligible := 0
 		for _, observed := range byRepository {
 			if observed.err == nil {
-				eligible += observed.snapshot.Counts[role]
+				eligibleByRole[role] += observed.snapshot.Counts[role]
 			}
 		}
-		if !controller.ensureLanePreflight(ctx, lane, repositories, expiries, eligible > 0) {
+		if eligibleByRole[role] > 0 {
+			providerEligible[lane.Provider+"\x00"+lane.MCPServer] = true
+		}
+	}
+	preflightReady := make(map[string]bool)
+	for _, role := range roles {
+		lane := controller.lane(role)
+		key := lane.Provider + "\x00" + lane.MCPServer
+		if _, checked := preflightReady[key]; checked {
+			continue
+		}
+		preflightReady[key] = controller.ensureLanePreflight(ctx, lane, repositories, expiries, providerEligible[key])
+	}
+
+	for _, role := range roles {
+		lane := controller.lane(role)
+		if !preflightReady[lane.Provider+"\x00"+lane.MCPServer] {
 			continue
 		}
 		remaining := lane.Capacity - active[role]
@@ -505,7 +524,14 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 					break
 				}
 				observed, ok := byRepository[repository.Repository]
-				if !ok || observed.err != nil || observed.snapshot.Counts[role] <= 0 || controller.inBackoff(repository.Repository, role) {
+				if !ok || observed.err != nil || observed.snapshot.Counts[role] <= 0 {
+					continue
+				}
+				if controller.inBackoff(repository.Repository, role) {
+					controller.updateRepository(repository.Repository, func(state *RepositoryStatus) {
+						state.Status = StatusDegraded
+						state.Detail = string(role) + " launch retry is backed off"
+					})
 					continue
 				}
 				record, launchErr := controller.workers.Launch(ctx, worker.LaunchRequest{
@@ -533,7 +559,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 			}
 		}
 	}
-	controller.setRunningStatus(true)
+	controller.setReconciledStatus()
 }
 
 func (controller *Controller) addLaunchProbe(workerID, repository string, role queueview.Role) {
@@ -727,6 +753,49 @@ func (controller *Controller) setRunningStatus(ready bool) {
 	}
 	controller.record.UpdatedAt = controller.now().UTC()
 	_ = controller.write(controller.record)
+}
+
+func (controller *Controller) setReconciledStatus() {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if controller.record.Status == StatusStopping {
+		return
+	}
+	providerBlockers := 0
+	for _, provider := range controller.record.Providers {
+		if provider.Status == StatusDegraded {
+			providerBlockers++
+		}
+	}
+	repositoryBlockers := 0
+	for _, repository := range controller.record.Repositories {
+		if repository.Status == StatusDegraded {
+			repositoryBlockers++
+		}
+	}
+	if providerBlockers == 0 && repositoryBlockers == 0 {
+		controller.record.Status = StatusRunning
+		controller.record.Detail = "reconciling all enrolled repositories; idle lanes wait for admission or verification"
+	} else {
+		blockers := make([]string, 0, 2)
+		if providerBlockers > 0 {
+			blockers = append(blockers, countLabel(providerBlockers, "provider"))
+		}
+		if repositoryBlockers > 0 {
+			blockers = append(blockers, countLabel(repositoryBlockers, "repository"))
+		}
+		controller.record.Status = StatusDegraded
+		controller.record.Detail = "reconciliation blocked by " + strings.Join(blockers, " and ") + "; ready lanes continue"
+	}
+	controller.record.UpdatedAt = controller.now().UTC()
+	_ = controller.write(controller.record)
+}
+
+func countLabel(count int, singular string) string {
+	if count == 1 {
+		return "1 " + singular
+	}
+	return fmt.Sprintf("%d %ss", count, singular)
 }
 
 func (controller *Controller) setBackoff(repository string, role queueview.Role) {

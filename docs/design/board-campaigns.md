@@ -87,6 +87,13 @@ It records configuration, coarse per-repository/lane status, worker IDs it
 launched, timestamps, and sanitized errors. It does not persist queue items,
 terminal output, environment, tokens, or attempt payloads.
 
+The top-level state is a rollup, not an independent heartbeat. A current
+repository or provider blocker makes it degraded even when another ready lane
+continues launching. The dashboard pairs that state with cumulative launches,
+currently active node workers counted against lane capacity, and the most
+recent queue-observation time so a polling-but-idle campaign is distinguishable
+from a blocked one.
+
 An idle running campaign waits for human proposal admission and Snowcat's
 pull-request verifier. Explicit stop cancels future setup, preflight,
 observation, and launch calls. Already-launched workers and every source and

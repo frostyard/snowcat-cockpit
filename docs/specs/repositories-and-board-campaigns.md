@@ -78,6 +78,11 @@ timestamps. They MUST NOT contain a queue item, attempt payload, environment,
 terminal output, provider credential, observer credential, or lease token.
 State files are mode `0600` where Unix permissions apply.
 
+The dashboard MUST present the campaign's cumulative launched-worker count,
+the current active node-worker count used by campaign lane-capacity accounting,
+and the age and timestamp of the newest repository observation. These
+execution-side signals do not infer a Snowcat work outcome.
+
 ## Reconciliation rules
 
 1. Only one campaign may be active on a node. Active states are `starting`,
@@ -106,9 +111,13 @@ State files are mode `0600` where Unix permissions apply.
    outcome.
 8. Empty queue observations leave the campaign running. Human proposal
    admission and delayed pull-request verification may add later work.
-9. Stop and process shutdown MUST NOT stop a worker, delete a source, delete a
+9. After each reconciliation, the top-level campaign status MUST be `degraded`
+   while any current repository or provider status is degraded. Its detail
+   MUST direct the operator to those blockers while ready lanes continue.
+   `refresh-needed` on an idle lane is not a blocker.
+10. Stop and process shutdown MUST NOT stop a worker, delete a source, delete a
    workspace, or infer a Snowcat outcome from provider exit.
-10. On node restart, a previously active durable record becomes `stopped` with
+11. On node restart, a previously active durable record becomes `stopped` with
     an interrupted detail. The node MUST NOT resume launches automatically.
 
 ## References

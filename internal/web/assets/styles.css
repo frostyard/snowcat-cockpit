@@ -115,7 +115,13 @@ code { color: #8ddbf8; font: 10px var(--font-mono); }
 .ph-fleet-launch { margin-bottom: 6px; }
 
 .ph-campaign { padding: 16px 18px 0; overflow: hidden; }
-.ph-campaign-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(330px, .9fr); gap: 20px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ph-campaign-telemetry { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 -18px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.ph-campaign-telemetry > div { display: grid; grid-template-columns: 1fr auto; gap: 1px 12px; padding: 9px 14px; border-right: 1px solid var(--line); }
+.ph-campaign-telemetry > div:last-child { border-right: 0; }
+.ph-campaign-telemetry span { color: #7cbddc; font: 700 8px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.ph-campaign-telemetry strong { font-size: 15px; line-height: 1; }
+.ph-campaign-telemetry small { grid-column: 1 / -1; color: #7a9cb0; font: 8.5px var(--font-mono); }
+.ph-campaign-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(330px, .9fr); gap: 20px; padding-top: 12px; }
 .ph-campaign-command { padding-bottom: 16px; }
 .ph-campaign-copy strong { font-size: 13px; }
 .ph-campaign-copy p { max-width: 680px; margin: 5px 0 13px; color: #8fb0c2; font-size: 10.5px; line-height: 1.55; }
@@ -238,6 +244,9 @@ code { color: #8ddbf8; font: 10px var(--font-mono); }
   .ph-campaign-config { grid-template-columns: 1fr; }
   .ph-campaign-actions { align-items: stretch; flex-direction: column; }
   .ph-campaign-start { min-width: 0; }
+  .ph-campaign-telemetry { grid-template-columns: 1fr; }
+  .ph-campaign-telemetry > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .ph-campaign-telemetry > div:last-child { border-bottom: 0; }
 }
 
 @media (max-width: 470px) {

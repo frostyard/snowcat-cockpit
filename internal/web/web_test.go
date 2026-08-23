@@ -293,6 +293,11 @@ func TestRoutes(t *testing.T) {
 		if !strings.Contains(response.Body.String(), "Start all enrolled repositories") {
 			t.Fatal("dashboard multi-repository campaign control is missing")
 		}
+		for _, marker := range []string{"campaign-active-workers", "campaign-launched-workers", "campaign-last-observed"} {
+			if !strings.Contains(response.Body.String(), marker) {
+				t.Fatalf("dashboard campaign activity marker %q is missing", marker)
+			}
+		}
 		if strings.Contains(response.Body.String(), "https://") || strings.Contains(response.Body.String(), "http://") {
 			t.Fatal("dashboard contains an external runtime dependency")
 		}

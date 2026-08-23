@@ -7,6 +7,7 @@ let fleetRole = null;
 let latestSnapshot = null;
 let latestWorkers = [];
 let latestRepositories = [];
+let latestCampaign = null;
 const workerObservations = new Map();
 
 function formatUptime() {
@@ -17,6 +18,18 @@ function formatUptime() {
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${minutes % 60}m`;
+}
+
+function formatAge(value) {
+  if (!value) return "waiting";
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return "unknown";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp.getTime()) / 1000));
+  if (seconds < 5) return "now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
 }
 
 async function requestJSON(path, options = {}) {
@@ -154,7 +167,28 @@ async function setupRepository(repository) {
   await loadRepositories();
 }
 
+function renderCampaignActivity(record) {
+  const workerIds = record?.workerIds || [];
+  const activeWorkers = latestWorkers.filter((worker) => ["running", "allocating"].includes(worker.status));
+  const observations = (record?.repositories || [])
+    .map((repository) => repository.observedAt)
+    .filter(Boolean)
+    .map((value) => new Date(value))
+    .filter((value) => !Number.isNaN(value.getTime()) && value.getUTCFullYear() > 1);
+  const lastObserved = observations.length
+    ? new Date(Math.max(...observations.map((value) => value.getTime())))
+    : null;
+
+  byId("campaign-active-workers").textContent = String(activeWorkers.length);
+  byId("campaign-launched-workers").textContent = String(workerIds.length);
+  byId("campaign-last-observed").textContent = formatAge(lastObserved);
+  byId("campaign-last-observed-at").textContent = lastObserved
+    ? lastObserved.toLocaleString()
+    : "waiting for observation";
+}
+
 function renderCampaign(record) {
+  latestCampaign = record;
   const active = ["starting", "running", "degraded", "stopping"].includes(record.status);
   if (record.id && record.request) {
     byId("campaign-adapter").value = record.request.adapter || "host";
@@ -171,6 +205,7 @@ function renderCampaign(record) {
   campaignBadge.className = `ph-badge ${record.status === "running" ? "ok" : record.status === "degraded" ? "danger" : "warn"}`;
   campaignBadge.textContent = record.status;
   byId("campaign-summary").textContent = record.detail;
+  renderCampaignActivity(record);
   byId("campaign-start").disabled = active || latestRepositories.length === 0;
   byId("campaign-stop").disabled = !active || record.status === "stopping";
   for (const id of ["campaign-adapter", "campaign-runtime", "campaign-work-provider", "campaign-review-provider", "campaign-discoverers", "campaign-implementers", "campaign-reviewers"]) {
@@ -546,6 +581,7 @@ async function loadWorkers() {
   try {
     latestWorkers = await requestJSON("/api/v1/workers");
     renderWorkers(latestWorkers);
+    if (latestCampaign) renderCampaignActivity(latestCampaign);
   } catch (error) {
     byId("workers-badge").className = "ph-badge danger";
     byId("workers-badge").textContent = "error";
@@ -807,5 +843,8 @@ loadProfiles();
 loadWorkers();
 loadRepositories();
 loadCampaign();
-setInterval(() => { byId("node-uptime").textContent = formatUptime(); }, 1000);
+setInterval(() => {
+  byId("node-uptime").textContent = formatUptime();
+  if (latestCampaign) renderCampaignActivity(latestCampaign);
+}, 1000);
 setInterval(() => { loadWorkers(); loadCampaign(); }, 5000);

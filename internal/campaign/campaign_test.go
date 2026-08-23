@@ -202,6 +202,55 @@ func TestExpiredPreflightRefreshesOnlyWhenWorkIsEligible(t *testing.T) {
 	}
 }
 
+func TestCampaignReportsEligibleProviderFailureAsDegraded(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
+		repository.Repository: {queueview.RoleDiscoverer: 1},
+	}}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{err: errors.New("failed proof")}, queue, &fakeWorkers{})
+	controller.record.Status = StatusRunning
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, map[string]time.Time{})
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusDegraded || record.Providers[0].Status != StatusDegraded {
+		t.Fatalf("campaign = %#v, want degraded provider blocker", record)
+	}
+	if record.Detail != "reconciliation blocked by 1 provider; ready lanes continue" {
+		t.Fatalf("detail = %q", record.Detail)
+	}
+	if len(record.WorkerIDs) != 0 {
+		t.Fatalf("workers launched through failed preflight: %q", record.WorkerIDs)
+	}
+}
+
+func TestCampaignKeepsIdleRefreshNeededProvidersRunning(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{repository.Repository: {}}}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, &fakeWorkers{})
+	controller.record.Status = StatusRunning
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, map[string]time.Time{})
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusRunning {
+		t.Fatalf("status = %q, want running idle campaign", record.Status)
+	}
+	for _, provider := range record.Providers {
+		if provider.Status != "refresh-needed" {
+			t.Fatalf("provider = %#v, want refresh-needed", provider)
+		}
+	}
+}
+
 func TestCampaignBacksOffWorkerThatExitsBeforeLaunchStabilizes(t *testing.T) {
 	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
