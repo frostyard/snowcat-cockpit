@@ -91,8 +91,10 @@ maximizing comments.
   needs at least one blocker; a pass carries none.
 - Put the head SHA you reviewed and the checks you ran in `result.evidence`, and
   the model you ran in `result.model` (provenance, never verified). Do **not**
-  report the pull request as an artifact — it is not yours — and pass no
-  `followUps` (a `pr-review` creates none).
+  report the pull request as an artifact — it is not yours — and create no
+  `followUps` (a `pr-review` creates none): send `result.artifacts: []` and
+  `followUps: []`, or omit both — the `complete_work` schema defaults each
+  to an empty array, so either form is accepted.
 - Call `release_work` when you have not begun judging and another worker can
   safely retry, including every self-authored item and any kind other than
   `pr-review`. Reserve `unable-to-review` for an independent reviewer who began
