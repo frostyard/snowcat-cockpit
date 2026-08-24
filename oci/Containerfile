@@ -15,7 +15,11 @@ RUN npm install --global @openai/codex@0.149.0 \
 
 FROM docker.io/library/golang:1.26.7-bookworm@sha256:6ef6e30f0ea5c384f6d111cf856e024e3086bbdcb1779da3f3b3fbba0aea53d2 AS fetch
 
-ARG TARGETARCH=amd64
+# No default: buildx sets TARGETARCH per platform, and a default here would
+# override it — the v0.1.3 arm64 build fetched amd64 binaries that way (the
+# earlier per-provider files had the same default and never executed what
+# they fetched, so it went unseen). Local builds pass it explicitly.
+ARG TARGETARCH
 ARG CLAUDE_VERSION=2.1.239
 ARG COPILOT_VERSION=1.0.80
 ARG MISE_VERSION=2026.8.12
