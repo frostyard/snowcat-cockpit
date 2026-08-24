@@ -58,32 +58,44 @@ Claude discoverers and implementers use `sonnet`; reviewers use `opus`. The
 selected alias is recorded as non-secret worker metadata, while Snowcat's
 canonical review skill remains authoritative when comparing it with the origin.
 
-Build all local images with `make oci-image`, or one with
-`make oci-image-codex`, `make oci-image-claude`, or
-`make oci-image-copilot`. Build the corresponding images in Docker's distinct
-local store with `make docker-image` or `make docker-image-<provider>`. The
-image sources pin Codex CLI `0.149.0`, Claude
-Code `2.1.239`, Copilot CLI `1.0.80`, Go `1.26.7` (the image tracks the highest `go.mod` directive in the fleet, because `GOTOOLCHAIN=local` refuses a lower one), Node.js `26`, multi-architecture
-base-image manifest digests, and the official amd64/arm64 provider release
-checksums. Launch uses a pre-existing image with `--pull=never`.
+One Containerfile ([`oci/Containerfile`](../../oci/Containerfile),
+[ADR-0012](../adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
+§1) builds one `base` stage and three provider targets — `codex`, `claude`,
+`copilot` — each the base plus its entrypoint, so the three images share
+every layer. Build all local images with `make oci-image`, or one with
+`make oci-image-<provider>`; build them in Docker's distinct local store
+with `make docker-image` or `make docker-image-<provider>`. The base pins
+Codex CLI `0.149.0`, Claude Code `2.1.239`, Copilot CLI `1.0.80`, Go
+`1.26.7` (the image tracks the highest `go.mod` toolchain in the fleet,
+because `GOTOOLCHAIN=local` refuses a lower one), Node.js `26`, mise
+`2026.8.12`, multi-architecture base-image manifest digests, and the
+official amd64/arm64 release checksums for every fetched binary. Launch
+uses a pre-existing image with `--pull=never`.
 
 Pushing a version tag runs
-`.github/workflows/worker-images.yml`. It publishes provider-specific
-multi-architecture manifests as
+`.github/workflows/worker-images.yml`. It publishes the three provider
+targets of the one Containerfile as multi-architecture manifests
 `ghcr.io/frostyard/snowcat-cockpit-worker:<provider>-<version>` and records
 each immutable `name:tag@sha256:<manifest-digest>` reference in the workflow
 summary. Runtime configuration MUST use the recorded digest form. The workflow
 uses GitHub's repository-scoped package token and does not accept a registry
 credential from Cockpit configuration.
 
-The first-slice command baseline is deliberately small: the base shell and
-Unix utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
-patch, jq, ripgrep, unzip, `column`, and `golangci-lint` at the fleet's
-pinned release (2.13.1 — the version `std`, `clix`, and `updex` gates
-require; an earlier campaign lost four workers to in-lease lint downloads
-crossing the PID ceiling). Every image sets `GOTOOLCHAIN=local`: a
-repository whose `go.mod` the image's Go cannot satisfy fails at the first
-`go` invocation instead of downloading a toolchain inside the lease. Cockpit projects the exact running
+The command baseline every image guarantees is enumerated once, in
+[`oci/baseline.json`](../../oci/baseline.json) (also shipped at
+`/usr/local/share/snowcat-cockpit/baseline.json`): the base shell and Unix
+utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
+patch, jq, ripgrep, unzip, `column`, and `mise`. A repository declares
+every tool its gates need beyond that baseline in its own `mise.toml` and
+`mise.lock` (core ADR-0043); the file is the boundary that makes "beyond
+the baseline" checkable. The base also carries `golangci-lint` at the
+fleet's pinned release as a stopgap listed under `stopgap` in the same
+file — it leaves once every enrolled repository declares it in
+`mise.lock`. Every image sets `GOTOOLCHAIN=local` (a repository whose
+`go.mod` the image's Go cannot satisfy fails at the first `go` invocation
+instead of downloading a toolchain inside the lease) and
+`MISE_DATA_DIR=/var/lib/snowcat-cockpit/mise`, the read-only tool cache
+Cockpit mounts at target preparation (ADR-0012 §2; empty in the image). Cockpit projects the exact running
 `snowcat-cockpit` binary into the already-mounted worker workspace for
 worker-local target preparation and lease relay; it is not an independently
 versioned image tool. A new tool enters this list only after
@@ -187,13 +199,14 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
 | --- | --- |
 | Container name | `cockpit-<worker-id>` |
 | Worker target helper | Exact running Cockpit binary projected under the private `.agents` workspace tree |
-| Codex OCI image | [`oci/Containerfile`](../../oci/Containerfile) and [`oci/entrypoint.sh`](../../oci/entrypoint.sh) |
-| Claude OCI image | [`oci/Claude.Containerfile`](../../oci/Claude.Containerfile), [`oci/claude-entrypoint.sh`](../../oci/claude-entrypoint.sh), and [`oci/claude-system-prompt.txt`](../../oci/claude-system-prompt.txt) |
-| Copilot OCI image | [`oci/Copilot.Containerfile`](../../oci/Copilot.Containerfile) and [`oci/copilot-entrypoint.sh`](../../oci/copilot-entrypoint.sh) |
+| Worker base image | [`oci/Containerfile`](../../oci/Containerfile) `base` stage; its guaranteed baseline is [`oci/baseline.json`](../../oci/baseline.json) |
+| Codex OCI image | [`oci/Containerfile`](../../oci/Containerfile) target `codex` and [`oci/entrypoint.sh`](../../oci/entrypoint.sh) |
+| Claude OCI image | [`oci/Containerfile`](../../oci/Containerfile) target `claude`, [`oci/claude-entrypoint.sh`](../../oci/claude-entrypoint.sh), and [`oci/claude-system-prompt.txt`](../../oci/claude-system-prompt.txt) |
+| Copilot OCI image | [`oci/Containerfile`](../../oci/Containerfile) target `copilot` and [`oci/copilot-entrypoint.sh`](../../oci/copilot-entrypoint.sh) |
 | Worker record adapter | Exact normalized request adapter |
 | Runtime credential projection | Fixed provider/GitHub paths and the exact environment-variable names above |
 | Worker lifecycle relay | Exact projected Cockpit binary, configured as one provider-local stdio MCP server |
-| Published worker images | `.github/workflows/worker-images.yml` from the three checked-in Containerfiles |
+| Published worker images | `.github/workflows/worker-images.yml` from the one Containerfile's three provider targets |
 
 ## References
 
