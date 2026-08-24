@@ -27,6 +27,7 @@ in [org-adrs.md](org-adrs.md).
 - [0009 — Observe reclaimable Snowcat work](adr/0009-observe-reclaimable-snowcat-work.md)
 - [0010 — Bind managed leases to worker liveness](adr/0010-bind-managed-leases-to-worker-liveness.md)
 - [0011 — Run the node as a systemd user service](adr/0011-run-the-node-as-a-systemd-user-service.md)
+- [0012 — Provision repository tools before the lease and derive node state from its sources](adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
 
 ### Design
 

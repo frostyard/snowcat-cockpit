@@ -317,7 +317,10 @@ remains part of the real Snowcat operating trial.
 ## References
 
 - Rationale:
-  [ADR-0001](../adr/0001-keep-cockpit-outside-snowcat.md)
+  [ADR-0001](../adr/0001-keep-cockpit-outside-snowcat.md);
+  repository tools provisioned at preparation, kit and catalog derived
+  from their sources:
+  [ADR-0012](../adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
 - Contract: [launcher CLI](../specs/launcher-cli.md)
 - Built in:
   [spike roadmap — Phases 1–3](../plans/0001-spike-roadmap.md)
