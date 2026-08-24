@@ -112,6 +112,10 @@ COPY --chmod=0755 oci/entrypoint.sh /usr/local/bin/cockpit-entrypoint-codex
 COPY --chmod=0755 oci/claude-entrypoint.sh /usr/local/bin/cockpit-entrypoint-claude
 COPY --chmod=0755 oci/copilot-entrypoint.sh /usr/local/bin/cockpit-entrypoint-copilot
 
+# GOPATH and GOCACHE live under /tmp, the one tmpfs the launch mounts exec:
+# Docker mounts the home tmpfs noexec, and Go executes from both (go tool
+# covdata, $GOPATH/bin, cached tool builds); every worker on the Docker node
+# was rediscovering that inside its lease (issue #15).
 # GOTOOLCHAIN=local: a go.mod the image's Go cannot satisfy fails at the first
 # go invocation instead of downloading a toolchain inside a lease. MISE_DATA_DIR
 # is the read-only per-repository tool cache Cockpit mounts at target
@@ -123,8 +127,8 @@ ENV PATH=/var/lib/snowcat-cockpit/mise/shims:/usr/local/go/bin:/usr/local/sbin:/
     CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 \
     COPILOT_HOME=/home/cockpit/.copilot \
     GH_CONFIG_DIR=/home/cockpit/.config/gh \
-    GOPATH=/home/cockpit/go \
-    GOCACHE=/home/cockpit/.cache/go-build \
+    GOPATH=/tmp/go \
+    GOCACHE=/tmp/go-build \
     GOTOOLCHAIN=local \
     MISE_DATA_DIR=/var/lib/snowcat-cockpit/mise \
     MISE_CACHE_DIR=/home/cockpit/.cache/mise \

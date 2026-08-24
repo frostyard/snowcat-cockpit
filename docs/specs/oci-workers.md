@@ -102,7 +102,9 @@ versioned image tool. A new tool enters this list only after
 a repository contract or retained worker terminal demonstrates the need.
 Commands that a provider runs through a login shell MUST still resolve `go` and
 `gofmt` through `/usr/local/bin`; `GOPATH` and `GOCACHE` MUST live beneath the
-bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
+bounded, executable `/tmp` tmpfs rather than the read-only image filesystem or
+the home tmpfs — Docker mounts the home tmpfs `noexec`, and Go executes from
+both paths (`go tool covdata`, `$GOPATH/bin`, cached tool builds).
 
 ## Rules
 
