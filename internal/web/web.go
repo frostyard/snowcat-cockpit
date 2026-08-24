@@ -66,7 +66,7 @@ type WorkerManager interface {
 	InspectBase(context.Context, string, string) (worker.BaseInspection, error)
 	Launch(context.Context, worker.LaunchRequest) (worker.Record, error)
 	Stop(context.Context, string) (worker.Record, error)
-	Cleanup(context.Context, string) (worker.Record, error)
+	Cleanup(context.Context, string, worker.CleanupOptions) (worker.Record, error)
 	OpenConsole(context.Context, string) (worker.Console, error)
 }
 
@@ -312,7 +312,7 @@ func New(config Config) http.Handler {
 			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "managed workers are unavailable"})
 			return
 		}
-		record, err := config.Workers.Cleanup(request.Context(), request.PathValue("id"))
+		record, err := config.Workers.Cleanup(request.Context(), request.PathValue("id"), worker.CleanupOptions{})
 		if err != nil {
 			writeWorkerError(response, err)
 			return

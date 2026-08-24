@@ -526,6 +526,7 @@ func runWorkerAction(action string, args []string, stdout, stderr io.Writer) int
 	stateDirectory := flags.String("state-dir", defaultStateDir(), "directory containing managed-worker state")
 	skillsDirectory := flags.String("skills-dir", defaultSkillsDir(), "directory containing the locked Snowcat worker kit")
 	jsonOutput := flags.Bool("json", false, "write the worker record as JSON")
+	discardDrifted := flags.Bool("discard-drifted-skills", false, "cleanup only: discard a Cockpit-owned skill file whose content matches neither the worker's recorded kit nor the current lock (the branch is retained first)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -556,7 +557,7 @@ func runWorkerAction(action string, args []string, stdout, stderr io.Writer) int
 	if action == "stop" {
 		record, err = manager.Stop(context.Background(), workerID)
 	} else {
-		record, err = manager.Cleanup(context.Background(), workerID)
+		record, err = manager.Cleanup(context.Background(), workerID, worker.CleanupOptions{DiscardDriftedSkills: *discardDrifted})
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "%s managed worker: %v\n", action, err)

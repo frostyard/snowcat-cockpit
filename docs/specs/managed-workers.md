@@ -155,8 +155,13 @@ HTTP operations:
    into its record or treat it as queue state.
 7. Stop MUST address one exact worker and MUST retain its workspace and record.
 8. Cleanup MUST be explicit, MUST refuse a running or dirty workspace, MUST
-   remove only byte-matching Cockpit skill files, and MUST retain a `cleaned`
-   lifecycle record. It MUST NOT delete the worker branch. Before deleting a
+   remove only Cockpit skill files whose bytes match the kit the worker was
+   launched with (the launch records that kit's source revision and per-skill
+   digests on the worker record; a record that predates the field is compared
+   against the node's current lock), and MUST retain a `cleaned` lifecycle
+   record. A skill file matching neither MUST be refused unless the operator
+   passes `--discard-drifted-skills`, in which case the record names each
+   discarded skill. It MUST NOT delete the worker branch. Before deleting a
    clean OCI checkout, it MUST import that checkout's exact worker branch into
    the source repository.
 9. Failed allocation or launch MUST remain recorded and MUST NOT trigger

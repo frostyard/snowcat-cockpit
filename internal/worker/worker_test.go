@@ -3,6 +3,8 @@ package worker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -139,7 +141,7 @@ func TestOSManagerCreatesRetainsAndCleansRealWorktreeAndTmux(t *testing.T) {
 	if _, err := manager.AttachCommand(context.Background(), record.ID); err != nil {
 		t.Fatalf("retained terminal is not attachable: %v", err)
 	}
-	cleaned, err := manager.Cleanup(context.Background(), record.ID)
+	cleaned, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,14 +351,14 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 	}
 
 	runner.dirty = true
-	if _, err := manager.Cleanup(context.Background(), record.ID); !errors.Is(err, ErrConflict) {
+	if _, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("dirty cleanup error = %v", err)
 	}
 	if _, err := os.Stat(record.Workspace); err != nil {
 		t.Fatalf("dirty workspace was removed: %v", err)
 	}
 	runner.dirty = false
-	cleaned, err := manager.Cleanup(context.Background(), record.ID)
+	cleaned, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +535,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 	if !slices.Contains(stop.Arguments, manager.containerName(record.ID)) {
 		t.Fatalf("OCI stop did not address the exact container: %#v", stop.Arguments)
 	}
-	cleaned, err := manager.Cleanup(context.Background(), record.ID)
+	cleaned, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1233,5 +1235,93 @@ func TestOCIWorkerRefusesMiseTomlWithoutALock(t *testing.T) {
 	}
 	if runner.provisionRuns != 0 {
 		t.Fatal("provisioning ran without a lock")
+	}
+}
+
+func TestCleanupComparesOwnedSkillsAgainstTheWorkersRecordedKit(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{}
+	manager, source := provisioningTestManager(t, runner)
+	record, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "discoverer", Repository: "frostyard/std", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Kit == nil || record.Kit.Revision == "" || record.Kit.Skills["work-snowcat-queue"] == "" {
+		t.Fatalf("launch did not record the kit: %#v", record.Kit)
+	}
+	if _, err := manager.Stop(context.Background(), record.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A worker launched under an older kit: its record names the digest of the
+	// file it was given, so cleanup accepts that file even though the node's
+	// current lock differs.
+	older := []byte("# an earlier revision of the skill\n")
+	for _, root := range []string{".agents", ".claude"} {
+		if err := os.WriteFile(filepath.Join(record.Workspace, root, "skills", "work-snowcat-queue", "SKILL.md"), older, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sum := sha256.Sum256(older)
+	record.Kit.Skills["work-snowcat-queue"] = hex.EncodeToString(sum[:])
+	if err := manager.write(record); err != nil {
+		t.Fatal(err)
+	}
+	cleaned, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{})
+	if err != nil || cleaned.Status != StatusCleaned || cleaned.Detail != "workspace cleaned; branch retained" {
+		t.Fatalf("cleanup against the recorded kit: %#v, %v", cleaned, err)
+	}
+}
+
+func TestCleanupRefusesDriftedOwnedSkillsUnlessDiscarded(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{}
+	manager, source := provisioningTestManager(t, runner)
+	record, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "discoverer", Repository: "frostyard/std", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Stop(context.Background(), record.ID); err != nil {
+		t.Fatal(err)
+	}
+	skill := filepath.Join(record.Workspace, ".claude", "skills", "review-snowcat-queue", "SKILL.md")
+	if err := os.WriteFile(skill, []byte("edited inside the lease\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{}); err == nil || !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "review-snowcat-queue") {
+		t.Fatalf("drifted skill was not refused: %v", err)
+	}
+	if _, err := os.Stat(record.Workspace); err != nil {
+		t.Fatalf("refused cleanup removed the workspace: %v", err)
+	}
+	cleaned, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{DiscardDriftedSkills: true})
+	if err != nil || cleaned.Status != StatusCleaned || !strings.Contains(cleaned.Detail, "drifted and were discarded: .claude/skills/review-snowcat-queue") || !strings.HasSuffix(cleaned.Detail, "workspace cleaned; branch retained") {
+		t.Fatalf("discarding cleanup: %#v, %v", cleaned, err)
+	}
+	if _, err := os.Stat(record.Workspace); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace remains after discarding cleanup: %v", err)
+	}
+}
+
+func TestCleanupOfALegacyRecordUsesTheCurrentLock(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{}
+	manager, source := provisioningTestManager(t, runner)
+	record, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "discoverer", Repository: "frostyard/std", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Stop(context.Background(), record.ID); err != nil {
+		t.Fatal(err)
+	}
+	record.Kit = nil
+	if err := manager.write(record); err != nil {
+		t.Fatal(err)
+	}
+	if cleaned, err := manager.Cleanup(context.Background(), record.ID, CleanupOptions{}); err != nil || cleaned.Status != StatusCleaned {
+		t.Fatalf("legacy record cleanup: %#v, %v", cleaned, err)
 	}
 }
