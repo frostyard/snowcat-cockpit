@@ -45,6 +45,22 @@ Go errors stay lowercase without trailing punctuation and wrap their cause.
 Filesystem tests use `t.TempDir()`. Keep CLI flags out of lower-level packages;
 pass explicit request/config structs instead.
 
+## Repository boundary
+
+`policies/agent-governance.json` is this repository's canonical
+agent-governance surface under the frostyard/core repository-surfaces
+contract v1; Snowcat reads it (from GitHub, at the observed default-branch
+head) when enrolling this repository in the fleet. Deny by default; read,
+write, and run-tests allowed; issues, pull requests, and follow-ups
+review-required. Review-required at high risk: workflows; release and image
+publication (`.goreleaser.yaml`, `.svu.yaml`, the release, snapshot, and
+worker-images workflows); everything that launches a worker or handles a
+credential (`oci/`, `bin/`, `internal/worker/`, `internal/leaseproxy/`,
+`internal/profile/`, `internal/preflight/`); the loopback dashboard
+(`internal/web/`, a writable terminal is an administrative surface); and
+the node service and CLI entry (`internal/nodeservice/`, `cmd/`). Change it
+only alongside the matching ADR or design change.
+
 ## Documentation rules
 
 `docs/` follows core's four-category shape—see the table and conventions in
