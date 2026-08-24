@@ -8,13 +8,26 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_TIME) -X main.builtBy=make"
 
-.PHONY: build build-cross bump check ci clean docs-check docker-image fmt fmt-check install lint lint-version-check oci-image test test-cover test-go test-oci-entrypoints test-observer-wrapper test-race test-spike tidy-check vet
+.PHONY: build build-cross bump check ci clean docs-check docker-image fmt fmt-check install lint lint-version-check oci-image test test-cover test-go test-oci-entrypoints test-observer-wrapper test-race test-spike tidy-check verify vet
 
-GOLANGCI_LINT_VERSION := 2.13.1
+# Pinned golangci-lint release, read from mise.toml — the single source of
+# every tool pin (core ADR-0043): `mise install` provisions it locally, in CI
+# (jdx/mise-action), and on Snowcat workers, verified against mise.lock.
+# Bump it there in a dedicated commit; never edit this line.
+GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/p' mise.toml))
+# The Go release this module is built with, from go.mod's toolchain line —
+# the only Go pin (mise reads the same line). golangci-lint must be built
+# with a Go at least this new, or its embedded gofmt and typechecker disagree
+# with the toolchain.
+GO_TOOLCHAIN := $(strip $(shell sed -n 's/^toolchain go\(.*\)/\1/p' go.mod))
 
 check: ci
 
-ci: tidy-check fmt-check vet lint-version-check lint test test-race build-cross docs-check
+# verify: credential-free, non-mutating gate (what a worker and a read-only
+# reviewer run); ci adds race, cross-build, and docs-check.
+verify: tidy-check fmt-check vet lint-version-check lint test
+
+ci: verify test-race build-cross docs-check
 
 tidy-check:
 	$(GO) mod tidy -diff
@@ -29,10 +42,15 @@ vet:
 	GOCACHE=$(GOCACHE) $(GO) vet ./...
 
 lint-version-check:
+	@test -n "$(GOLANGCI_LINT_VERSION)" || { echo "mise.toml pins no golangci-lint (add it, then run: mise install)"; exit 1; }
 	@installed="$$(golangci-lint version --short 2>/dev/null)" || { \
-		echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required for make ci"; exit 1; }; \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required for make ci (not installed; run: mise install)"; exit 1; }; \
 	if [[ "$$installed" != "$(GOLANGCI_LINT_VERSION)" ]]; then \
-		echo "expected golangci-lint $(GOLANGCI_LINT_VERSION), found $$installed"; exit 1; \
+		echo "expected golangci-lint $(GOLANGCI_LINT_VERSION), found $$installed (run: mise install)"; exit 1; \
+	fi; \
+	built="$$(golangci-lint version 2>/dev/null | sed -n 's/.*built with go\([0-9.]*\).*/\1/p')"; \
+	if [[ -n "$$built" ]] && [[ "$$(printf '%s\n%s\n' "$(GO_TOOLCHAIN)" "$$built" | sort -V | head -1)" != "$(GO_TOOLCHAIN)" ]]; then \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) was built with go$$built, older than go.mod's toolchain go$(GO_TOOLCHAIN): bump golangci-lint first (core ADR-0043)"; exit 1; \
 	fi
 
 lint:
