@@ -187,11 +187,16 @@ yourself.
   defaulted. A follow-up whose objective is a change (a fix, a bump, a doc
   edit) is `requiredArtifact: "pull-request"` with `write` and `open-pr` in
   its `allowedActions`; a discovery-only follow-up is `requiredArtifact:
-  "none"` with `read` (and `create-followup` if it may propose). Snowcat
+  "none"` with `read` (and `create-followup` if it may propose). A change
+  follow-up takes an implementation kind — `<program>-fix` such as
+  `docs-drift-fix` or `quality-gap-fix` — never the parent's `-discovery`
+  kind: discoverers claim by kind, and a `-discovery` item that owes a pull
+  request is one every discoverer claims and none can deliver. Snowcat
   refuses the whole completion — the root stays yours — for a change child
-  without `open-pr`, for a child that may `write` but declares `"none"`, and
-  for a missing or unknown value; nothing widens an admitted item afterwards,
-  and a change nobody can deliver is not a proposal.
+  without `open-pr`, for a child that may `write` but declares `"none"`, for
+  a `-discovery` kind that promises a pull request or grants `write` or
+  `open-pr`, and for a missing or unknown value; nothing widens an admitted
+  item afterwards, and a change nobody can deliver is not a proposal.
 - Report created issues, pull requests, commits, and reports as artifacts.
   Snowcat checks each reported issue and pull request against GitHub when you
   call `complete_work`: report the exact URL in the item's repository. A
