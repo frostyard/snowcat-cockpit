@@ -5,9 +5,9 @@ readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 readonly CODEX_ENTRYPOINT="$PROJECT_ROOT/oci/entrypoint.sh"
 readonly CODEX_CONTAINERFILE="$PROJECT_ROOT/oci/Containerfile"
 readonly CLAUDE_ENTRYPOINT="$PROJECT_ROOT/oci/claude-entrypoint.sh"
-readonly CLAUDE_CONTAINERFILE="$PROJECT_ROOT/oci/Claude.Containerfile"
+readonly CLAUDE_CONTAINERFILE="$PROJECT_ROOT/oci/Containerfile"
 readonly COPILOT_ENTRYPOINT="$PROJECT_ROOT/oci/copilot-entrypoint.sh"
-readonly COPILOT_CONTAINERFILE="$PROJECT_ROOT/oci/Copilot.Containerfile"
+readonly COPILOT_CONTAINERFILE="$PROJECT_ROOT/oci/Containerfile"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2

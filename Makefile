@@ -8,7 +8,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_TIME) -X main.builtBy=make"
 
-.PHONY: build build-cross bump check ci clean docs-check docker-image docker-image-claude docker-image-codex docker-image-copilot fmt fmt-check install lint lint-version-check oci-image oci-image-claude oci-image-codex oci-image-copilot test test-cover test-go test-oci-entrypoints test-observer-wrapper test-race test-spike tidy-check vet
+.PHONY: build build-cross bump check ci clean docs-check docker-image fmt fmt-check install lint lint-version-check oci-image test test-cover test-go test-oci-entrypoints test-observer-wrapper test-race test-spike tidy-check vet
 
 GOLANGCI_LINT_VERSION := 2.13.1
 
@@ -88,28 +88,18 @@ bump:
 
 oci-image: oci-image-codex oci-image-claude oci-image-copilot
 
-oci-image-codex:
-	podman build --file oci/Containerfile --tag localhost/snowcat-cockpit-worker:codex-0.149.0 .
-	@podman image inspect localhost/snowcat-cockpit-worker:codex-0.149.0 --format 'export SNOWCAT_COCKPIT_OCI_CODEX_IMAGE=sha256:{{.Id}}'
+# One Containerfile, one base, three provider targets (ADR-0012 §1).
+PROVIDERS := codex claude copilot
+define provider-image-rules
+oci-image-$(1):
+	podman build --build-arg TARGETARCH="$$$$(go env GOARCH)" --file oci/Containerfile --target $(1) --tag localhost/snowcat-cockpit-worker:$(1) .
+	@podman image inspect localhost/snowcat-cockpit-worker:$(1) --format 'export SNOWCAT_COCKPIT_OCI_$(shell echo $(1) | tr a-z A-Z)_IMAGE=sha256:{{.Id}}'
 
-oci-image-claude:
-	podman build --build-arg TARGETARCH="$$(go env GOARCH)" --file oci/Claude.Containerfile --tag localhost/snowcat-cockpit-worker:claude-2.1.239 .
-	@podman image inspect localhost/snowcat-cockpit-worker:claude-2.1.239 --format 'export SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE=sha256:{{.Id}}'
-
-oci-image-copilot:
-	podman build --build-arg TARGETARCH="$$(go env GOARCH)" --file oci/Copilot.Containerfile --tag localhost/snowcat-cockpit-worker:copilot-1.0.80 .
-	@podman image inspect localhost/snowcat-cockpit-worker:copilot-1.0.80 --format 'export SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE=sha256:{{.Id}}'
+docker-image-$(1):
+	docker build --build-arg TARGETARCH="$$$$(go env GOARCH)" --file oci/Containerfile --target $(1) --tag localhost/snowcat-cockpit-worker:$(1) .
+	@docker image inspect localhost/snowcat-cockpit-worker:$(1) --format 'export SNOWCAT_COCKPIT_DOCKER_$(shell echo $(1) | tr a-z A-Z)_IMAGE={{.Id}}'
+endef
+$(foreach p,$(PROVIDERS),$(eval $(call provider-image-rules,$(p))))
 
 docker-image: docker-image-codex docker-image-claude docker-image-copilot
 
-docker-image-codex:
-	docker build --file oci/Containerfile --tag localhost/snowcat-cockpit-worker:codex-0.149.0 .
-	@docker image inspect localhost/snowcat-cockpit-worker:codex-0.149.0 --format 'export SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE={{.Id}}'
-
-docker-image-claude:
-	docker build --build-arg TARGETARCH="$$(go env GOARCH)" --file oci/Claude.Containerfile --tag localhost/snowcat-cockpit-worker:claude-2.1.239 .
-	@docker image inspect localhost/snowcat-cockpit-worker:claude-2.1.239 --format 'export SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE={{.Id}}'
-
-docker-image-copilot:
-	docker build --build-arg TARGETARCH="$$(go env GOARCH)" --file oci/Copilot.Containerfile --tag localhost/snowcat-cockpit-worker:copilot-1.0.80 .
-	@docker image inspect localhost/snowcat-cockpit-worker:copilot-1.0.80 --format 'export SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE={{.Id}}'

@@ -22,13 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - provider: codex
-            file: oci/Containerfile
-          - provider: claude
-            file: oci/Claude.Containerfile
-          - provider: copilot
-            file: oci/Copilot.Containerfile
+        provider: [codex, claude, copilot]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,7 +47,8 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: ${{ matrix.file }}
+          file: oci/Containerfile
+          target: ${{ matrix.provider }}
           platforms: linux/amd64,linux/arm64
           pull: true
           push: true

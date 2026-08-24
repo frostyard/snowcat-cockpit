@@ -189,9 +189,10 @@ retains the workspace; cleanup refuses a running or dirty workspace and leaves
 the branch intact. Observe makes one exact, read-only Snowcat correlation call;
 the result is displayed but never written into the worker record.
 
-For unattended Codex, Claude, and Copilot workers, build images in the selected
-runtime's local store and pin launches to the resulting provider-specific image
-IDs. Podman remains the default:
+For unattended Codex, Claude, and Copilot workers, build the three provider
+targets of the one worker Containerfile in the selected runtime's local store
+and pin launches to the resulting image IDs (the three share every layer;
+`oci/baseline.json` lists what they guarantee). Podman remains the default:
 
 ```bash
 make oci-image
