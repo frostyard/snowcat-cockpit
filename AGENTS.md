@@ -31,7 +31,11 @@ boundary or scope.
 ## Build and code map
 
 - `make build` builds `dist/snowcat-cockpit`; `make ci` is the complete local
-  and CI gate.
+  and CI gate. `mise.toml`/`mise.lock` pin every tool `make` needs beyond the
+  Go toolchain in `go.mod` (core ADR-0043); run `mise install` before either
+  target. `make verify` is the credential-free, non-mutating subset (tidy,
+  fmt, vet, lint, test) a worker or a read-only reviewer runs; `ci` adds
+  race, cross-build, and docs-check.
 - `cmd/snowcat-cockpit/` owns argument parsing and process startup.
 - `internal/worker/` owns isolated checkout and terminal lifecycles;
   `internal/fleet/` only plans one bounded batch.
