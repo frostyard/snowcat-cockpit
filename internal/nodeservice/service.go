@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 const (
@@ -700,7 +701,7 @@ func renderUnit(request InstallRequest, environmentPath string) (string, error) 
 		}
 		quoted = append(quoted, value)
 	}
-	quotedEnvironment, err := quoteUnitValue(environmentPath)
+	unitEnvironment, err := environmentFileDirectivePath(environmentPath)
 	if err != nil {
 		return "", fmt.Errorf("%w: service environment path", ErrInvalid)
 	}
@@ -722,7 +723,25 @@ Delegate=yes
 
 [Install]
 WantedBy=default.target
-`, quotedEnvironment, strings.Join(quoted, " ")), nil
+`, unitEnvironment, strings.Join(quoted, " ")), nil
+}
+
+func environmentFileDirectivePath(value string) (string, error) {
+	if err := rejectControls(value); err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(value) {
+		return "", errors.New("must be absolute")
+	}
+	if strings.ContainsAny(value, `\"'*?[]`) {
+		return "", errors.New("contains unsupported systemd path syntax")
+	}
+	for _, character := range value {
+		if unicode.IsSpace(character) {
+			return "", errors.New("contains unsupported whitespace")
+		}
+	}
+	return strings.ReplaceAll(value, "%", "%%"), nil
 }
 
 func quoteEnvironmentValue(value string) (string, error) {

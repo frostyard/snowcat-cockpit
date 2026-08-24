@@ -91,12 +91,16 @@ func TestInstallPublishesPrivateReleaseAndStartsUserService(t *testing.T) {
 	unit := readFile(t, unitPath)
 	for _, wanted := range []string{
 		"KillMode=process", "Restart=on-failure", "Delegate=yes",
+		"EnvironmentFile=" + filepath.Join(fixture.request.InstallRoot, environmentName),
 		filepath.Join(fixture.request.InstallRoot, "current", "bin", "snowcat-cockpit-serve"),
 		`"--listen" "127.0.0.1:7682"`,
 	} {
 		if !strings.Contains(unit, wanted) {
 			t.Fatalf("unit is missing %q:\n%s", wanted, unit)
 		}
+	}
+	if strings.Contains(unit, `EnvironmentFile="`) {
+		t.Fatalf("unit quoted EnvironmentFile path, which systemd treats literally:\n%s", unit)
 	}
 	if mode := fileMode(t, unitPath); mode != 0o600 {
 		t.Fatalf("unit mode = %o, want 600", mode)

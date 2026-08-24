@@ -96,7 +96,8 @@ Delegate=yes
    atomic file replacement. It MUST atomically switch `current` only after the
    release is complete.
 4. Unit and environment generation MUST preserve argv boundaries, escape
-   systemd syntax, and reject newline or control-character injection.
+   systemd syntax, and reject newline, control-character, glob, quote,
+   backslash, or whitespace injection in the exact environment-file path.
 5. No generated artifact may contain an observer token, Snowcat MCP token,
    provider credential, GitHub token, lease token, arbitrary environment dump,
    terminal output, or Snowcat queue record. Environment projection is exactly
