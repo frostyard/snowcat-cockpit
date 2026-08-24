@@ -50,8 +50,10 @@ maximizing comments.
   acceptance criteria, instructions, and `sourceRef` issue are the contract the
   pull request claims to satisfy. Read the pull request and its diff at exactly
   `review.headSha` (`gh pr diff <n>` or `gh api repos/<owner>/<repo>/pulls/<n>/files`);
-  check the head out and run the repository's own checks locally when you can
-  (`run-tests` is allowed; nothing on GitHub is).
+  check the head out and run the repository's non-mutating gate — `make
+  verify` where it exists — never `make check` or any target that formats or
+  rewrites files (`run-tests` is allowed; `write` and anything on GitHub are
+  not).
 - **Cognitive diversity.** If you completed the origin item yourself in this
   session or otherwise authored the pull request, `release_work` before judging
   so an independent worker reviews it. Prefer a different model or provider
@@ -64,6 +66,15 @@ maximizing comments.
   most — never blockers. On round 2 or 3, examine `review.priorBlockers` and the
   diff since the previous head: reuse a fingerprint for a blocker still open, and
   name a new one only when the diff introduced it or made it newly assessable.
+- **Description blockers (ADR-0067).** A blocker whose only cure is an edit to
+  the pull request's *description* — not the diff — for example a missing or
+  wrong required template section, risk tier, or evidence claim, MUST carry the
+  fingerprint prefix `contract:pr-body:` and name the description, not a file,
+  as its `location`. Use this prefix only when a description edit alone would
+  cure the defect; a defect in the diff is a normal blocker even if the
+  description also needs updating. Snowcat routes `contract:pr-body:` blockers
+  straight to a human instead of a `pr-review-fix` — never mis-fingerprint a
+  tree defect this way just because it is also documented in the description.
 - You are **read-only on GitHub**: no comment, review, approval, push, edit, or
   ready-for-review change, and no follow-ups. Snowcat acts on your verdict — a
   `pass` marks the draft ready for a human, a `block` schedules one bounded

@@ -46,6 +46,14 @@ its sandbox; Snowcat only owns queue authorization and bookkeeping.
 
 ## Do the work
 
+Honor the claimed item's `executionTarget` before touching the repository
+(ADR-0073): `existing-pull-request` means the bound pull request's branch at
+exactly its recorded head — release or block when the head moved; never a new
+branch, never a second pull request. `new-pull-request` means a fresh branch
+from a freshly pulled default-branch base. `read-only` means a detached
+checkout you never mutate. Every follow-up you propose declares its own
+`executionTarget` alongside `requiredArtifact`.
+
 - Perform only actions listed in `allowedActions`. Absence means prohibition.
 - Pull the target repository's default branch immediately before branching,
   so a lease taken seconds before a merge does not build on a stale base.
@@ -145,6 +153,17 @@ Complete reporting the pull request as a `pull-request` artifact, with
 evidence naming each fingerprint as addressed or disputed, and the model you
 ran as `result.model`. Your push is a new head and Snowcat's next round (at
 most three per pull request; a third-round block goes to a human).
+
+**Never touch the description (ADR-0067).** `review.blockers` on a
+`pr-review-fix` never includes a description blocker (fingerprinted
+`contract:pr-body:`) — the gate routes those straight to a human instead of a
+fix, because a description edit moves no head for the gate to observe. Do not
+edit the pull request's description to satisfy this item, even if it looks
+related. If you believe one of *this* item's blockers was mis-partitioned —
+fingerprinted as a tree defect but really only curable by a description edit,
+or the reverse — say so in the evidence with the reason and still address (or
+dispute) it as given; do not silently reclassify it or edit the description
+yourself.
 
 ## Finish
 

@@ -69,3 +69,11 @@ Any red flag means stop and return to the selection gate.
 - Reimplementing the worker lifecycle here: defer duplicate detection,
   permissions, leases, evidence, artifacts, follow-ups, and completion to
   `work-snowcat-queue`.
+
+## Execution target
+
+Honor the claimed item's `executionTarget` (ADR-0073) before touching the
+repository — the bound pull request's branch at its recorded head for
+`existing-pull-request`, a fresh branch from a fresh base for
+`new-pull-request`, a detached never-mutated checkout for `read-only` — and
+declare one on every follow-up you propose.
