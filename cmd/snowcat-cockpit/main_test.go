@@ -260,7 +260,18 @@ func TestQueueObserverConfigurationUsesEnvironmentOnly(t *testing.T) {
 }
 
 func TestRunInstallKitThenProfiles(t *testing.T) {
-	t.Parallel()
+	// profiles exits 1 when any provider executable is absent from PATH, so
+	// the test supplies all three itself instead of depending on the host.
+	binDirectory := filepath.Join(t.TempDir(), "bin")
+	if err := os.Mkdir(binDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, executable := range []string{"codex", "claude", "copilot"} {
+		if err := os.WriteFile(filepath.Join(binDirectory, executable), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDirectory)
 
 	directory := filepath.Join(t.TempDir(), "skills")
 	var stdout bytes.Buffer
