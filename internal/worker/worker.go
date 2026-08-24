@@ -102,6 +102,7 @@ type Record struct {
 	TargetMode     string        `json:"targetMode,omitempty"`
 	TargetedAt     *time.Time    `json:"targetedAt,omitempty"`
 	Provisioning   *Provisioning `json:"provisioning,omitempty"`
+	Kit            *KitRecord    `json:"kit,omitempty"`
 	Status         string        `json:"status"`
 	Detail         string        `json:"detail"`
 	CreatedAt      time.Time     `json:"createdAt"`
@@ -135,6 +136,25 @@ type Command struct {
 	Arguments []string
 	Directory string
 	Env       []string
+}
+
+// KitRecord is the locked worker kit a worker was launched with: the Snowcat
+// source revision and each Cockpit-owned skill's digest. Cleanup compares the
+// retained skill files against these, not against whatever kit the node
+// carries at cleanup time, so a re-vendored kit never makes an older
+// workspace look tampered with.
+type KitRecord struct {
+	Revision string            `json:"revision"`
+	Skills   map[string]string `json:"skills"`
+}
+
+// CleanupOptions bounds what Cleanup may discard beyond a clean workspace.
+type CleanupOptions struct {
+	// DiscardDriftedSkills lets cleanup remove a Cockpit-owned skill file whose
+	// digest matches neither the worker's recorded kit nor the current lock.
+	// The branch is retained first either way; only an uncommitted edit to a
+	// Cockpit-owned, git-excluded skill file is lost, and the record says so.
+	DiscardDriftedSkills bool
 }
 
 type Runner interface {
@@ -365,6 +385,7 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 			return manager.fail(record, "locked worker kit installation failed", err)
 		}
 	}
+	record.Kit = kitRecord(profile.LockedManifest())
 	targetHelperCommand := "snowcat-cockpit"
 	if manager.targetHelper != "" {
 		targetHelperCommand, err = installTargetHelper(manager.targetHelper, workspace)
@@ -556,7 +577,7 @@ func (manager *Manager) Stop(ctx context.Context, workerID string) (Record, erro
 	return record, nil
 }
 
-func (manager *Manager) Cleanup(ctx context.Context, workerID string) (Record, error) {
+func (manager *Manager) Cleanup(ctx context.Context, workerID string, options CleanupOptions) (Record, error) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 
@@ -595,8 +616,12 @@ func (manager *Manager) Cleanup(ctx context.Context, workerID string) (Record, e
 		if err := manager.stopTerminalLocked(ctx, record); err != nil {
 			return Record{}, err
 		}
-		if err := removeOwnedSkills(record.Workspace); err != nil {
+		drifted, err := removeOwnedSkills(record, options)
+		if err != nil {
 			return Record{}, err
+		}
+		if len(drifted) > 0 {
+			record.Detail = "Cockpit-owned skill files drifted and were discarded: " + strings.Join(drifted, ", ") + "; "
 		}
 		if record.Adapter == AdapterOCI {
 			if record.Workspace != manager.workspacePath(record.ID) {
@@ -620,7 +645,11 @@ func (manager *Manager) Cleanup(ctx context.Context, workerID string) (Record, e
 	}
 	now := manager.now().UTC()
 	record.Status = StatusCleaned
-	record.Detail = "workspace cleaned; branch retained"
+	if strings.HasPrefix(record.Detail, "Cockpit-owned skill files drifted") {
+		record.Detail += "workspace cleaned; branch retained"
+	} else {
+		record.Detail = "workspace cleaned; branch retained"
+	}
 	record.CleanedAt = &now
 	if err := manager.write(record); err != nil {
 		return Record{}, err
@@ -1564,31 +1593,57 @@ func validateRecord(record Record) error {
 	return nil
 }
 
-func removeOwnedSkills(workspace string) error {
+func kitRecord(manifest profile.Manifest) *KitRecord {
+	skills := make(map[string]string, len(manifest.Skills))
+	for _, skill := range manifest.Skills {
+		skills[skill.Name] = skill.SHA256
+	}
+	return &KitRecord{Revision: manifest.Source.Revision, Skills: skills}
+}
+
+// removeOwnedSkills deletes the Cockpit-owned skill files a worker was given.
+// A file is Cockpit's when its digest matches the worker's recorded kit (or,
+// for a record that predates the kit field, the node's current lock). Any
+// other content is drift: refused unless the caller discards it explicitly,
+// in which case the skill names are returned for the record.
+func removeOwnedSkills(record Record, options CleanupOptions) ([]string, error) {
 	manifest := profile.LockedManifest()
+	expected := make(map[string]string, len(manifest.Skills))
+	for _, skill := range manifest.Skills {
+		expected[skill.Name] = skill.SHA256
+	}
+	if record.Kit != nil {
+		for name, digest := range record.Kit.Skills {
+			expected[name] = digest
+		}
+	}
+	drifted := []string{}
 	for _, providerRoot := range []string{".agents", ".claude"} {
 		for _, skill := range manifest.Skills {
-			path := filepath.Join(workspace, providerRoot, "skills", skill.Name, "SKILL.md")
+			path := filepath.Join(record.Workspace, providerRoot, "skills", skill.Name, "SKILL.md")
 			content, err := os.ReadFile(path)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			if err != nil {
-				return fmt.Errorf("inspect Cockpit-owned skill before cleanup: %w", err)
+				return nil, fmt.Errorf("inspect Cockpit-owned skill before cleanup: %w", err)
 			}
 			digest := sha256.Sum256(content)
-			if hex.EncodeToString(digest[:]) != skill.SHA256 {
-				return fmt.Errorf("%w: Cockpit-owned skill path drifted", ErrConflict)
+			if hex.EncodeToString(digest[:]) != expected[skill.Name] {
+				if !options.DiscardDriftedSkills {
+					return nil, fmt.Errorf("%w: Cockpit-owned skill path drifted (%s/skills/%s); rerun with --discard-drifted-skills to discard it", ErrConflict, providerRoot, skill.Name)
+				}
+				drifted = append(drifted, providerRoot+"/skills/"+skill.Name)
 			}
 			if err := os.Remove(path); err != nil {
-				return fmt.Errorf("remove Cockpit-owned skill: %w", err)
+				return nil, fmt.Errorf("remove Cockpit-owned skill: %w", err)
 			}
 			_ = os.Remove(filepath.Dir(path))
 		}
-		_ = os.Remove(filepath.Join(workspace, providerRoot, "skills"))
-		_ = os.Remove(filepath.Join(workspace, providerRoot))
+		_ = os.Remove(filepath.Join(record.Workspace, providerRoot, "skills"))
+		_ = os.Remove(filepath.Join(record.Workspace, providerRoot))
 	}
-	return nil
+	return drifted, nil
 }
 
 type limitedBuffer struct {

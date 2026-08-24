@@ -125,7 +125,7 @@ func (manager *fakeWorkerManager) Stop(_ context.Context, workerID string) (work
 	return worker.Record{ID: workerID, Status: worker.StatusStopped}, nil
 }
 
-func (manager *fakeWorkerManager) Cleanup(_ context.Context, workerID string) (worker.Record, error) {
+func (manager *fakeWorkerManager) Cleanup(_ context.Context, workerID string, _ worker.CleanupOptions) (worker.Record, error) {
 	return worker.Record{ID: workerID, Status: worker.StatusCleaned}, nil
 }
 
