@@ -230,7 +230,7 @@ both paths (`go tool covdata`, `$GOPATH/bin`, cached tool builds).
 | Copilot OCI image | [`oci/Containerfile`](../../oci/Containerfile) target `copilot` and [`oci/copilot-entrypoint.sh`](../../oci/copilot-entrypoint.sh) |
 | Worker record adapter | Exact normalized request adapter |
 | Runtime credential projection | Fixed provider/GitHub paths and the exact environment-variable names above |
-| Worker lifecycle relay | Exact projected Cockpit binary, configured as one provider-local stdio MCP server |
+| Worker lifecycle relay | Exact projected Cockpit binary, configured as one provider-local stdio MCP server; it holds the lease Snowcat minted on the worker's `claim_work`, renews it on its own schedule, and substitutes that lease's token, item, and worker identity into every lifecycle call, so the provider model never has to echo the token and a rejected heartbeat for another item never loses this lease |
 | Published worker images | `.github/workflows/worker-images.yml` from the one Containerfile's three provider targets |
 
 ## References
