@@ -8,13 +8,17 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_TIME) -X main.builtBy=make"
 
-.PHONY: build build-cross bump check ci clean docs-check docker-image fmt fmt-check install lint lint-version-check oci-image test test-cover test-go test-oci-entrypoints test-observer-wrapper test-race test-spike tidy-check verify vet
+.PHONY: build build-cross bump check ci clean docs-check docker-image fmt fmt-check install lint lint-version-check oci-image test test-cover test-go test-oci-entrypoints test-observer-wrapper test-race test-spike tidy-check verify vet workflow-lint
 
 # Pinned golangci-lint release, read from mise.toml — the single source of
 # every tool pin (core ADR-0043): `mise install` provisions it locally, in CI
 # (jdx/mise-action), and on Snowcat workers, verified against mise.lock.
 # Bump it there in a dedicated commit; never edit this line.
 GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/p' mise.toml))
+# Pinned actionlint release, read from mise.toml — same tool-pin discipline
+# as golangci-lint above (core ADR-0043). Bump it there in a dedicated commit;
+# never edit this line.
+ACTIONLINT_VERSION := $(strip $(shell sed -n 's/^actionlint = "\(.*\)"/\1/p' mise.toml))
 # The Go release this module is built with, from go.mod's toolchain line —
 # the only Go pin (mise reads the same line). golangci-lint must be built
 # with a Go at least this new, or its embedded gofmt and typechecker disagree
@@ -27,7 +31,7 @@ check: ci
 # reviewer run); ci adds race, cross-build, and docs-check.
 verify: tidy-check fmt-check vet lint-version-check lint test
 
-ci: verify test-race build-cross docs-check
+ci: verify test-race build-cross docs-check workflow-lint
 
 tidy-check:
 	$(GO) mod tidy -diff
@@ -55,6 +59,15 @@ lint-version-check:
 
 lint:
 	golangci-lint run
+
+workflow-lint:
+	@test -n "$(ACTIONLINT_VERSION)" || { echo "mise.toml pins no actionlint (add it, then run: mise install)"; exit 1; }
+	@installed="$$(actionlint -version 2>/dev/null | head -1)" || { \
+		echo "actionlint $(ACTIONLINT_VERSION) is required for make ci (not installed; run: mise install)"; exit 1; }; \
+	if [[ "$$installed" != "$(ACTIONLINT_VERSION)" ]]; then \
+		echo "expected actionlint $(ACTIONLINT_VERSION), found $$installed (run: mise install)"; exit 1; \
+	fi
+	actionlint
 
 docs-check:
 	node scripts/check-docs.mjs
