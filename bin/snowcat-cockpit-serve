@@ -6,7 +6,8 @@ readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 readonly MCP_URL="https://snowcat.goat-snake.ts.net/mcp"
 readonly MCP_HOST="snowcat.goat-snake.ts.net"
 
-CREDENTIAL_FILE="${SNOWCAT_COCKPIT_OBSERVER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env}"
+OBSERVER_CREDENTIAL_FILE="${SNOWCAT_COCKPIT_OBSERVER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env}"
+WORKER_CREDENTIAL_FILE="${SNOWCAT_COCKPIT_WORKER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/mcp-token.env}"
 COCKPIT_BIN="${SNOWCAT_COCKPIT_BIN:-$PROJECT_ROOT/dist/snowcat-cockpit}"
 
 die() {
@@ -21,14 +22,21 @@ file_stat() {
   stat -c "$format_linux" -- "$path" 2>/dev/null || stat -f "$format_darwin" "$path" 2>/dev/null
 }
 
-[[ -f "$CREDENTIAL_FILE" ]] || die "observer credential file is missing: $CREDENTIAL_FILE"
-[[ ! -L "$CREDENTIAL_FILE" ]] || die "observer credential file must not be a symbolic link"
+validate_credential_file() {
+  local label=$1
+  local path=$2
+  local credential_mode credential_owner
 
-credential_mode="$(file_stat '%a' '%Lp' "$CREDENTIAL_FILE")" || die "cannot inspect observer credential permissions"
-[[ "$credential_mode" == "600" ]] || die "observer credential file must have mode 0600 (found $credential_mode)"
+  [[ -f "$path" ]] || die "$label credential file is missing: $path"
+  [[ ! -L "$path" ]] || die "$label credential file must not be a symbolic link"
+  credential_mode="$(file_stat '%a' '%Lp' "$path")" || die "cannot inspect $label credential permissions"
+  [[ "$credential_mode" == "600" ]] || die "$label credential file must have mode 0600 (found $credential_mode)"
+  credential_owner="$(file_stat '%u' '%u' "$path")" || die "cannot inspect $label credential owner"
+  [[ "$credential_owner" == "$(id -u)" ]] || die "$label credential file must be owned by the current user"
+}
 
-credential_owner="$(file_stat '%u' '%u' "$CREDENTIAL_FILE")" || die "cannot inspect observer credential owner"
-[[ "$credential_owner" == "$(id -u)" ]] || die "observer credential file must be owned by the current user"
+validate_credential_file observer "$OBSERVER_CREDENTIAL_FILE"
+validate_credential_file worker "$WORKER_CREDENTIAL_FILE"
 
 observer_token=""
 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -38,9 +46,21 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       observer_token="${line#export SNOWCAT_OBSERVER_TOKEN=}"
       ;;
   esac
-done <"$CREDENTIAL_FILE"
+done <"$OBSERVER_CREDENTIAL_FILE"
 
 [[ "$observer_token" =~ ^snowcat_[[:alnum:]_-]+$ ]] || die "observer credential file has an invalid SNOWCAT_OBSERVER_TOKEN"
+
+worker_token=""
+while IFS= read -r line || [[ -n "$line" ]]; do
+  case "$line" in
+    'export SNOWCAT_MCP_TOKEN='*)
+      [[ -z "$worker_token" ]] || die "worker credential file declares SNOWCAT_MCP_TOKEN more than once"
+      worker_token="${line#export SNOWCAT_MCP_TOKEN=}"
+      ;;
+  esac
+done <"$WORKER_CREDENTIAL_FILE"
+
+[[ "$worker_token" =~ ^snowcat_[[:alnum:]_-]+$ ]] || die "worker credential file has an invalid SNOWCAT_MCP_TOKEN"
 [[ -x "$COCKPIT_BIN" ]] || die "Cockpit binary is not executable: $COCKPIT_BIN (run make build)"
 
 if [[ -n "${SNOWCAT_COCKPIT_OCI_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE:-}" && -z "${GH_TOKEN:-}" ]]; then
@@ -51,6 +71,7 @@ if [[ -n "${SNOWCAT_COCKPIT_OCI_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CODEX_IMAGE:-}${SN
 fi
 
 export SNOWCAT_MCP_URL="$MCP_URL"
+export SNOWCAT_MCP_TOKEN="$worker_token"
 
 if [[ -n "${SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE:-}" ]]; then
   if [[ -z "${SNOWCAT_COCKPIT_DOCKER_ADD_HOST:-}" ]]; then
@@ -70,6 +91,6 @@ fi
 
 export SNOWCAT_COCKPIT_MCP_URL="$MCP_URL"
 export SNOWCAT_COCKPIT_MCP_TOKEN="$observer_token"
-unset observer_token SNOWCAT_OBSERVER_TOKEN
+unset observer_token worker_token SNOWCAT_OBSERVER_TOKEN
 
 exec "$COCKPIT_BIN" serve "$@"

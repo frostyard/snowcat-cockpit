@@ -1,8 +1,10 @@
 # Cockpit node
 
 Living document. Rationale:
-[ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md).
-Contracts: [node CLI and HTTP API](../specs/node-api.md).
+[ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
+[ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md).
+Contracts: [node CLI and HTTP API](../specs/node-api.md),
+[Linux node user service](../specs/node-service.md).
 
 ## Overview
 
@@ -37,6 +39,22 @@ The process owns only non-secret local state:
 
 It never stores terminal output, provider or MCP credentials, Snowcat lease
 tokens, or authoritative queue records.
+
+On Linux, `snowcat-cockpit node install` makes that process a systemd user
+service instead of keeping it in an operator tmux session. The installer copies
+the exact executable and reviewed credential wrapper into a content-addressed
+release, atomically selects it, and converges one fixed user unit. Status and
+restart require both active systemd state and a version-matched loopback health
+response. The generated environment contains only explicitly allowlisted
+non-secret paths, pinned image references, and the observer and worker
+credential paths; credentials remain in their existing protected files and
+keyrings.
+
+Systemd owns only the node process. The unit uses `KillMode=process`, so a node
+restart or explicit service uninstall leaves dedicated worker tmux servers and
+every retained workspace intact. The restarted node marks an interrupted
+campaign stopped and never resumes it automatically. Service uninstall also
+retains content-addressed releases and all execution state.
 
 Each managed worker has one isolated Git worktree, stable non-secret
 worker ID, and dedicated tmux server as decided by
@@ -196,11 +214,15 @@ Cockpit into a queue poller or treating a completed lease as a dead process.
   session.
 - A missing optional provider or container runtime is a visible readiness
   result, not a node startup failure.
+- Use `snowcat-cockpit node status` and `node restart` for a Linux service;
+  `journalctl --user -u snowcat-cockpit.service` reads its process logs.
 
 ## References
 
-- Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md)
-- Contracts: [node CLI and HTTP API](../specs/node-api.md)
+- Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
+  [ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md)
+- Contracts: [node CLI and HTTP API](../specs/node-api.md),
+  [node service](../specs/node-service.md)
 - Profile contract: [worker profiles and locked skill kit](../specs/worker-profiles.md)
 - Live readiness contract: [provider preflight](../specs/provider-preflight.md)
 - Queue and batch contract: [queue observation and bounded fleets](../specs/queue-observation-and-fleets.md)

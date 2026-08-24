@@ -3,7 +3,8 @@
 Living document. Rationale:
 [ADR-0001](../adr/0001-keep-cockpit-outside-snowcat.md),
 [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
-[ADR-0010](../adr/0010-bind-managed-leases-to-worker-liveness.md).
+[ADR-0010](../adr/0010-bind-managed-leases-to-worker-liveness.md),
+[ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md).
 Contracts: [launcher CLI](../specs/launcher-cli.md),
 [node CLI and HTTP API](../specs/node-api.md).
 
@@ -22,6 +23,11 @@ measured gaps in skill/configuration preflight, workspace allocation, role
 selection, and local lifecycle visibility. The production
 [Cockpit node](node.md) addresses those execution-side gaps without taking over
 Snowcat coordination.
+
+The production node is installed on Linux as a systemd user service. That
+service replaces tmux only as the node process supervisor; each retained worker
+continues to use its dedicated tmux server, outside the node's stop/restart
+lifecycle.
 
 ## Boundary
 

@@ -5,6 +5,7 @@ readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 readonly WRAPPER="$PROJECT_ROOT/bin/snowcat-cockpit-serve"
 readonly TEST_ROOT="$(mktemp -d /tmp/snowcat-cockpit-observer-wrapper.XXXXXX)"
 readonly CREDENTIAL_FILE="$TEST_ROOT/profile-observer.env"
+readonly WORKER_CREDENTIAL_FILE="$TEST_ROOT/mcp-token.env"
 readonly FAKE_COCKPIT="$TEST_ROOT/snowcat-cockpit"
 readonly FAKE_BIN="$TEST_ROOT/bin"
 
@@ -24,6 +25,11 @@ export SNOWCAT_OBSERVER_TOKEN=snowcat_0123456789abcdef_0123456789abcdef012345678
 EOF
 chmod 0600 "$CREDENTIAL_FILE"
 
+cat >"$WORKER_CREDENTIAL_FILE" <<'EOF'
+export SNOWCAT_MCP_TOKEN=snowcat_worker_0123456789abcdef0123456789abcdef
+EOF
+chmod 0600 "$WORKER_CREDENTIAL_FILE"
+
 cat >"$FAKE_COCKPIT" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -32,6 +38,7 @@ set -euo pipefail
 [[ "$3" == "127.0.0.1:17682" ]]
 [[ "$SNOWCAT_COCKPIT_MCP_URL" == "https://snowcat.goat-snake.ts.net/mcp" ]]
 [[ "$SNOWCAT_COCKPIT_MCP_TOKEN" == "snowcat_0123456789abcdef_0123456789abcdef0123456789abcdef" ]]
+[[ "$SNOWCAT_MCP_TOKEN" == "snowcat_worker_0123456789abcdef0123456789abcdef" ]]
 [[ -z "${SNOWCAT_OBSERVER_TOKEN+x}" ]]
 printf 'wrapper fixture passed\n'
 EOF
@@ -39,6 +46,7 @@ chmod 0700 "$FAKE_COCKPIT"
 
 output="$(
   SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" \
+    SNOWCAT_COCKPIT_WORKER_ENV="$WORKER_CREDENTIAL_FILE" \
     SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
     "$WRAPPER" --listen 127.0.0.1:17682
 )"
@@ -76,13 +84,14 @@ output="$(
   PATH="$FAKE_BIN:$PATH" \
     SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE="sha256:fixture" \
     SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" \
+    SNOWCAT_COCKPIT_WORKER_ENV="$WORKER_CREDENTIAL_FILE" \
     SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
     "$WRAPPER"
 )"
 [[ "$output" == "OCI wrapper fixture passed" ]] || fail "unexpected OCI wrapper output: $output"
 
 chmod 0644 "$CREDENTIAL_FILE"
-if SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
+if SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" SNOWCAT_COCKPIT_WORKER_ENV="$WORKER_CREDENTIAL_FILE" SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
   "$WRAPPER" >/dev/null 2>&1; then
   fail "wrapper accepted a credential file with mode 0644"
 fi

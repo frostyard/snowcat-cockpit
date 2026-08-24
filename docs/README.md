@@ -26,6 +26,7 @@ in [org-adrs.md](org-adrs.md).
 - [0008 — Run persistent multi-repository board campaigns](adr/0008-run-persistent-multi-repository-board-campaigns.md)
 - [0009 — Observe reclaimable Snowcat work](adr/0009-observe-reclaimable-snowcat-work.md)
 - [0010 — Bind managed leases to worker liveness](adr/0010-bind-managed-leases-to-worker-liveness.md)
+- [0011 — Run the node as a systemd user service](adr/0011-run-the-node-as-a-systemd-user-service.md)
 
 ### Design
 
@@ -38,6 +39,7 @@ in [org-adrs.md](org-adrs.md).
 
 - [Launcher CLI](specs/launcher-cli.md)
 - [Node CLI and HTTP API](specs/node-api.md)
+- [Linux node user service](specs/node-service.md)
 - [Provider preflight](specs/provider-preflight.md)
 - [Managed workers](specs/managed-workers.md)
 - [Rootless OCI workers](specs/oci-workers.md)

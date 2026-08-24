@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
 	"github.com/frostyard/snowcat-cockpit/internal/leaseproxy"
 	"github.com/frostyard/snowcat-cockpit/internal/managedrepo"
+	"github.com/frostyard/snowcat-cockpit/internal/nodeservice"
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
 	"github.com/frostyard/snowcat-cockpit/internal/queueview"
@@ -52,6 +54,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDoctor(args[1:], stdout, stderr)
 	case "install-kit":
 		return runInstallKit(args[1:], stdout, stderr)
+	case "node":
+		return runNode(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	case "profiles":
@@ -77,6 +81,178 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
+}
+
+type nodeService interface {
+	Install(context.Context, nodeservice.InstallRequest) (nodeservice.Result, error)
+	Status(context.Context, nodeservice.Paths) (nodeservice.Result, error)
+	Restart(context.Context, nodeservice.Paths) (nodeservice.Result, error)
+	Uninstall(context.Context, nodeservice.Paths) (nodeservice.UninstallResult, error)
+}
+
+func runNode(args []string, stdout, stderr io.Writer) int {
+	manager, err := nodeservice.New(nodeservice.Config{
+		Runner: nodeservice.OSRunner{}, Health: nodeservice.HTTPHealthChecker{}, GOOS: runtime.GOOS,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "configure node service: %v\n", err)
+		return 1
+	}
+	return runNodeWithService(args, stdout, stderr, manager, os.Executable, os.LookupEnv)
+}
+
+func runNodeWithService(args []string, stdout, stderr io.Writer, service nodeService, executable func() (string, error), lookupEnv func(string) (string, bool)) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "node requires install, status, restart, or uninstall")
+		printNodeUsage(stderr)
+		return 2
+	}
+	action := args[0]
+	if action == "help" || action == "-h" || action == "--help" {
+		printNodeUsage(stdout)
+		return 0
+	}
+	flags := flag.NewFlagSet("node "+action, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	installRoot := flags.String("install-root", defaultNodeInstallRoot(), "root for versioned Cockpit node releases")
+	unitDirectory := flags.String("unit-dir", defaultUserUnitDir(), "systemd user unit directory")
+	jsonOutput := flags.Bool("json", false, "write the node service result as JSON")
+
+	var listenAddress, stateDirectory, skillsDirectory, sourceRoot, observerEnv, workerEnv *string
+	if action == "install" {
+		listenAddress = flags.String("listen", "127.0.0.1:7682", "loopback address for the dashboard")
+		stateDirectory = flags.String("state-dir", defaultStateDir(), "directory for non-secret node state")
+		skillsDirectory = flags.String("skills-dir", defaultSkillsDir(), "directory containing the Snowcat worker kit")
+		sourceRoot = flags.String("source-root", "", "directory for Cockpit-managed repository sources")
+		observerEnv = flags.String("observer-env", defaultObserverEnv(), "protected observer credential environment file")
+		workerEnv = flags.String("worker-env", defaultWorkerEnv(), "protected worker credential environment file")
+	} else if action != "status" && action != "restart" && action != "uninstall" {
+		fmt.Fprintf(stderr, "unknown node action %q\n", action)
+		printNodeUsage(stderr)
+		return 2
+	}
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "node %s accepts no positional arguments\n", action)
+		return 2
+	}
+
+	ctx := context.Background()
+	paths := nodeservice.Paths{InstallRoot: *installRoot, UnitDirectory: *unitDirectory}
+	switch action {
+	case "install":
+		if err := validateListenAddress(*listenAddress); err != nil {
+			fmt.Fprintf(stderr, "invalid listen address: %v\n", err)
+			return 2
+		}
+		executablePath, err := executable()
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve Cockpit executable: %v\n", err)
+			return 1
+		}
+		result, installErr := service.Install(ctx, nodeservice.InstallRequest{
+			Executable: executablePath, Version: version, Listen: *listenAddress,
+			StateDirectory: *stateDirectory, SkillsDirectory: *skillsDirectory,
+			SourceRoot: *sourceRoot, ObserverEnv: *observerEnv, WorkerEnv: *workerEnv,
+			InstallRoot: *installRoot, UnitDirectory: *unitDirectory,
+			Environment: captureNodeServiceEnvironment(lookupEnv),
+		})
+		if result.Install.Unit != "" {
+			if err := writeNodeServiceResult(stdout, result, *jsonOutput); err != nil {
+				fmt.Fprintf(stderr, "write node service result: %v\n", err)
+				return 1
+			}
+		}
+		if installErr != nil {
+			fmt.Fprintf(stderr, "install node service: %v\n", installErr)
+			return 1
+		}
+		return 0
+	case "status":
+		result, statusErr := service.Status(ctx, paths)
+		if result.Install.Unit != "" {
+			if err := writeNodeServiceResult(stdout, result, *jsonOutput); err != nil {
+				fmt.Fprintf(stderr, "write node service result: %v\n", err)
+				return 1
+			}
+		}
+		if statusErr != nil {
+			fmt.Fprintf(stderr, "read node service status: %v\n", statusErr)
+			return 1
+		}
+		return 0
+	case "restart":
+		result, restartErr := service.Restart(ctx, paths)
+		if result.Install.Unit != "" {
+			if err := writeNodeServiceResult(stdout, result, *jsonOutput); err != nil {
+				fmt.Fprintf(stderr, "write node service result: %v\n", err)
+				return 1
+			}
+		}
+		if restartErr != nil {
+			fmt.Fprintf(stderr, "restart node service: %v\n", restartErr)
+			return 1
+		}
+		return 0
+	case "uninstall":
+		result, uninstallErr := service.Uninstall(ctx, paths)
+		if uninstallErr != nil {
+			fmt.Fprintf(stderr, "uninstall node service: %v\n", uninstallErr)
+			return 1
+		}
+		if *jsonOutput {
+			if err := writeIndentedJSON(stdout, result); err != nil {
+				fmt.Fprintf(stderr, "write node service result: %v\n", err)
+				return 1
+			}
+		} else {
+			fmt.Fprintf(stdout, "%s uninstalled; retained %d release(s) and all node/worker state\n", result.Unit, result.RetainedReleases)
+		}
+		return 0
+	}
+	return 2
+}
+
+func printNodeUsage(output io.Writer) {
+	fmt.Fprintln(output, `Usage:
+  snowcat-cockpit node install [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>] [--source-root <directory>] [--observer-env <file>] [--worker-env <file>] [--install-root <directory>] [--unit-dir <directory>] [--json]
+  snowcat-cockpit node status [--install-root <directory>] [--unit-dir <directory>] [--json]
+  snowcat-cockpit node restart [--install-root <directory>] [--unit-dir <directory>] [--json]
+  snowcat-cockpit node uninstall [--install-root <directory>] [--unit-dir <directory>] [--json]`)
+}
+
+func writeNodeServiceResult(output io.Writer, result nodeservice.Result, jsonOutput bool) error {
+	if jsonOutput {
+		return writeIndentedJSON(output, result)
+	}
+	fmt.Fprintf(output, "%s %s/%s", result.Install.Unit, result.Service.ActiveState, result.Service.SubState)
+	if result.Service.MainPID != 0 {
+		fmt.Fprintf(output, " (pid %d)", result.Service.MainPID)
+	}
+	fmt.Fprintln(output)
+	fmt.Fprintf(output, "Dashboard: %s\nRelease: %s\n", result.Install.DashboardURL, result.Install.Release)
+	if result.Health != nil {
+		fmt.Fprintf(output, "Health: %s · version %s · node %s\n", result.Health.Status, result.Health.Version, result.Health.NodeID)
+	}
+	return nil
+}
+
+func writeIndentedJSON(output io.Writer, value any) error {
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
+}
+
+func captureNodeServiceEnvironment(lookup func(string) (string, bool)) map[string]string {
+	result := make(map[string]string)
+	for _, name := range nodeservice.EnvironmentAllowlist {
+		if value, exists := lookup(name); exists && value != "" {
+			result[name] = value
+		}
+	}
+	return result
 }
 
 func runWorkers(args []string, stdout, stderr io.Writer) int {
@@ -948,6 +1124,53 @@ func defaultStateDir() string {
 	return filepath.Join(home, ".local", "state", "snowcat-cockpit")
 }
 
+func defaultNodeInstallRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".snowcat-cockpit-install")
+	}
+	return filepath.Join(home, ".local", "libexec", "snowcat-cockpit")
+}
+
+func defaultUserUnitDir() string {
+	if root := os.Getenv("XDG_CONFIG_HOME"); root != "" {
+		return filepath.Join(root, "systemd", "user")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".config", "systemd", "user")
+	}
+	return filepath.Join(home, ".config", "systemd", "user")
+}
+
+func defaultObserverEnv() string {
+	if path := os.Getenv("SNOWCAT_COCKPIT_OBSERVER_ENV"); path != "" {
+		return path
+	}
+	if root := os.Getenv("XDG_CONFIG_HOME"); root != "" {
+		return filepath.Join(root, "snowcat", "profile-observer.env")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".config", "snowcat", "profile-observer.env")
+	}
+	return filepath.Join(home, ".config", "snowcat", "profile-observer.env")
+}
+
+func defaultWorkerEnv() string {
+	if path := os.Getenv("SNOWCAT_COCKPIT_WORKER_ENV"); path != "" {
+		return path
+	}
+	if root := os.Getenv("XDG_CONFIG_HOME"); root != "" {
+		return filepath.Join(root, "snowcat", "mcp-token.env")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".config", "snowcat", "mcp-token.env")
+	}
+	return filepath.Join(home, ".config", "snowcat", "mcp-token.env")
+}
+
 func defaultSkillsDir() string {
 	if directory := os.Getenv("SNOWCAT_COCKPIT_SKILLS_DIR"); directory != "" {
 		return directory
@@ -980,6 +1203,7 @@ func printUsage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
   snowcat-cockpit doctor [--json]
   snowcat-cockpit install-kit [--json] [--skills-dir <directory>]
+  snowcat-cockpit node install|status|restart|uninstall [options]
   snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
   snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
   snowcat-cockpit workers [--json] [--state-dir <directory>]

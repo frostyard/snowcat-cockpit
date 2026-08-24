@@ -94,6 +94,32 @@ make build
 bin/snowcat-cockpit-serve --listen 127.0.0.1:7682
 ```
 
+On Linux, install that same checked deployment as a systemd user service rather
+than keeping the node in tmux:
+
+```bash
+make build
+dist/snowcat-cockpit node install --listen 127.0.0.1:7682
+dist/snowcat-cockpit node status
+journalctl --user -u snowcat-cockpit.service
+```
+
+`node install` captures only allowlisted non-secret configuration such as the
+current `PATH`, provider config paths, pinned worker-image references, and the
+paths to the protected observer and worker credential files. The service reads
+both Snowcat tokens only at process start and gets a GitHub token from the
+current `gh` login. It installs a
+content-addressed release, enables startup with the user manager, and requires
+both active systemd state and a version-matched loopback health response.
+
+After rebuilding, rerun `node install` with the same node arguments to publish
+and select the new release; `node restart` restarts the currently selected
+release. An existing tmux-hosted node must be stopped explicitly before the
+first install so it releases the selected port; the installer will not kill an
+unknown process. `node uninstall` removes only the unit and service-selection
+files. It retains prior releases, node state, managed sources, worker terminals,
+and workspaces.
+
 Open `http://127.0.0.1:7682`. The node creates only a stable, non-secret ID
 under `${XDG_STATE_HOME:-$HOME/.local/state}/snowcat-cockpit`. It refuses a
 non-loopback listen address. A provider's launch control is enabled only while

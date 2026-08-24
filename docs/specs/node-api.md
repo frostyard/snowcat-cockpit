@@ -8,6 +8,7 @@ side-effect-free readiness command, and the loopback dashboard API.
 ```text
 snowcat-cockpit doctor [--json]
 snowcat-cockpit install-kit [--json] [--skills-dir <directory>]
+snowcat-cockpit node <install|status|restart|uninstall> [options]
 snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
 snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
 snowcat-cockpit workers [--json] [--state-dir <directory>]
@@ -122,11 +123,16 @@ MUST return an HTTP 404.
     pull, or mutate the source repository.
 14. Managed repositories and campaigns MUST follow the
     [repository and board-campaign contract](repositories-and-board-campaigns.md).
+15. Linux user-service installation and lifecycle operations MUST follow the
+    [node service contract](node-service.md). They MUST NOT change the node's
+    loopback, credential-retention, worker-retention, or campaign-restart
+    boundaries.
 
 ## References
 
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md)
 - Context: [node architecture](../design/node.md)
+- Service lifecycle: [Linux node user service](node-service.md)
 - Profile contract: [worker profiles and locked skill kit](worker-profiles.md)
 - Live readiness contract: [provider preflight](provider-preflight.md)
 - Worker lifecycle contract: [managed workers](managed-workers.md)
