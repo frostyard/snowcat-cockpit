@@ -2,7 +2,7 @@
   "version": 1,
   "source": {
     "repository": "https://github.com/frostyard/snowcat",
-    "revision": "aeeb9e662a4a8e4f9c4e51417d07de15182ba666"
+    "revision": "bf6bb0d28a3220ce82d5f2c746312d8468495670"
   },
   "skills": [
     {
@@ -15,7 +15,7 @@
     },
     {
       "name": "review-snowcat-queue",
-      "sha256": "8c55d741308a186a219cf96199dc5ac8af917a05beb925cf36286a713b0de93f"
+      "sha256": "73ca6d35dcee32e3f1a4e149b43a601d9b87bb835fdfda2fb28f7305dfa40262"
     }
   ]
 }
