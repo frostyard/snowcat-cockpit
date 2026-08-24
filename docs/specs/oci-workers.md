@@ -143,7 +143,10 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    validated provider-local direct Snowcat server name.
    Every provider disables its configured direct Snowcat server for the
    invocation and registers only the projected Cockpit binary's stdio lease
-   relay. Codex uses
+   relay. Codex writes a mode-`0600`, credential-free invocation profile below
+   its tmpfs `CODEX_HOME`; that profile disables the validated direct server,
+   registers the relay with its argument array as TOML, marks the relay required,
+   and is selected with `--profile`. Codex uses
    `codex exec --dangerously-bypass-approvals-and-sandbox` and its role-pinned
    model. Copilot uses non-interactive `--prompt`, `--allow-all`, disabled
    remote control, built-in MCP servers, logs and updates, plus model selector
