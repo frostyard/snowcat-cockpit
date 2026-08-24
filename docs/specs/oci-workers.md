@@ -88,10 +88,7 @@ utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
 patch, jq, ripgrep, unzip, `column`, and `mise`. A repository declares
 every tool its gates need beyond that baseline in its own `mise.toml` and
 `mise.lock` (core ADR-0043); the file is the boundary that makes "beyond
-the baseline" checkable. The base also carries `golangci-lint` at the
-fleet's pinned release as a stopgap listed under `stopgap` in the same
-file — it leaves once every enrolled repository declares it in
-`mise.lock`. Every image sets `GOTOOLCHAIN=local` (a repository whose
+the baseline" checkable. Every image sets `GOTOOLCHAIN=local` (a repository whose
 `go.mod` the image's Go cannot satisfy fails at the first `go` invocation
 instead of downloading a toolchain inside the lease) and
 `MISE_DATA_DIR=/var/lib/snowcat-cockpit/mise`, the read-only tool cache
