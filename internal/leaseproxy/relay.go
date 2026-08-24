@@ -229,6 +229,9 @@ func (relay *Relay) Handle(ctx context.Context, payload []byte) ([]byte, bool, e
 		} else if relay.isLost() {
 			return errorResult(request.ID, "SNOWCAT_COCKPIT_LEASE_LOST: stop immediately without further repository or GitHub mutation"), true, nil
 		}
+		if isLifecycleTool(request.Params.Name) && request.Params.Name != "claim_work" {
+			relay.bindLease(&request)
+		}
 		if request.Params.Name == "heartbeat_work" {
 			request.Params.Arguments["leaseSeconds"] = leaseSeconds
 		}
@@ -252,8 +255,38 @@ func (relay *Relay) Handle(ctx context.Context, payload []byte) ([]byte, bool, e
 	return response, emit, nil
 }
 
+func (relay *Relay) holdsItem(id string) bool {
+	relay.mutex.Lock()
+	defer relay.mutex.Unlock()
+	return relay.active != nil && relay.active.itemID == id
+}
+
 func (relay *Relay) Renew(ctx context.Context) {
 	relay.renew(ctx)
+}
+
+// bindLease substitutes the lease the relay holds — the token Snowcat minted
+// on this worker's claim_work and the bound worker identity — into a
+// lifecycle call, so the provider model never has to echo the token back
+// correctly (a Copilot reviewer once sent a malformed one and lost a healthy
+// lease). A call for an item other than the held lease is forwarded as sent
+// and Snowcat judges it.
+func (relay *Relay) bindLease(request *rpcRequest) {
+	relay.mutex.Lock()
+	defer relay.mutex.Unlock()
+	if relay.active == nil {
+		return
+	}
+	if request.Params.Arguments == nil {
+		request.Params.Arguments = map[string]any{}
+	}
+	id, _ := request.Params.Arguments["id"].(string)
+	if id != "" && id != relay.active.itemID {
+		return
+	}
+	request.Params.Arguments["id"] = relay.active.itemID
+	request.Params.Arguments["leaseToken"] = relay.active.token
+	request.Params.Arguments["worker"] = relay.workerID
 }
 
 func (relay *Relay) prepareClaim(request *rpcRequest) error {
@@ -282,7 +315,10 @@ func (relay *Relay) noteCompletionAttempt(arguments map[string]any) {
 func (relay *Relay) observe(request rpcRequest, response []byte) {
 	item, ok := successfulWorkItem(response)
 	if !ok {
-		if request.Params.Name == "heartbeat_work" {
+		// Only a rejected renewal of the lease the relay itself holds means the
+		// lease is gone; a model-issued heartbeat for some other item is not
+		// evidence about this worker's lease.
+		if id, _ := request.Params.Arguments["id"].(string); request.Params.Name == "heartbeat_work" && relay.holdsItem(id) {
 			relay.loseLease("Snowcat rejected worker lease renewal")
 		}
 		return

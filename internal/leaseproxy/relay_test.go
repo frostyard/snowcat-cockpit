@@ -238,3 +238,49 @@ func relayWorkspace(t *testing.T) string {
 	}
 	return workspace
 }
+
+func TestRelayBindsItsOwnLeaseTokenOnLifecycleCalls(t *testing.T) {
+	t.Parallel()
+
+	fixture := &snowcatFixture{}
+	relay, err := New(Config{
+		Endpoint: "https://snowcat.test/mcp", Token: "worker-secret", WorkerID: testWorker, Workspace: relayWorkspace(t),
+		HTTPClient: fixture.client(),
+		Now:        func() time.Time { return time.Date(2026, 8, 24, 17, 0, 0, 0, time.UTC) }, Errors: io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := requestPayload(1, "claim_work", map[string]any{"worker": testWorker})
+	if _, emit, err := relay.Handle(context.Background(), claim); err != nil || !emit {
+		t.Fatalf("claim relay = emit %v, error %v", emit, err)
+	}
+
+	// The model echoes a mangled token and omits the worker; the forwarded
+	// heartbeat carries the lease the relay holds, and the lease survives.
+	heartbeat := requestPayload(2, "heartbeat_work", map[string]any{"id": testItem, "leaseToken": "not-a-uuid"})
+	if _, emit, err := relay.Handle(context.Background(), heartbeat); err != nil || !emit {
+		t.Fatalf("heartbeat relay = emit %v, error %v", emit, err)
+	}
+	fixture.mutex.Lock()
+	forwarded := fixture.requests[len(fixture.requests)-1]
+	fixture.mutex.Unlock()
+	if forwarded.Params.Arguments["leaseToken"] != testToken || forwarded.Params.Arguments["worker"] != testWorker || forwarded.Params.Arguments["id"] != testItem {
+		t.Fatalf("forwarded heartbeat did not carry the relay's lease: %#v", forwarded.Params.Arguments)
+	}
+	if relay.isLost() {
+		t.Fatal("a mangled model token lost a healthy lease")
+	}
+
+	// A rejected heartbeat for some other item is not evidence about this lease.
+	fixture.mutex.Lock()
+	fixture.rejectRenew = true
+	fixture.mutex.Unlock()
+	other := requestPayload(3, "heartbeat_work", map[string]any{"id": "00000000-0000-4000-8000-000000000000", "leaseToken": "not-a-uuid"})
+	if _, _, err := relay.Handle(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	if relay.isLost() {
+		t.Fatal("a rejected heartbeat for another item lost this lease")
+	}
+}
