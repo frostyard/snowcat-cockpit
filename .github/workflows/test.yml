@@ -31,14 +31,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes tmux
 
       # mise.toml and mise.lock are the single source of every tool pin
-      # (core ADR-0043): this installs exactly the locked golangci-lint,
-      # checksum-verified, the same way a developer's `mise install` and a
-      # Snowcat worker's target preparation do, so the three cannot drift.
+      # (core ADR-0043): this installs exactly the locked golangci-lint and
+      # actionlint, checksum-verified, the same way a developer's
+      # `mise install` and a Snowcat worker's target preparation do, so the
+      # three cannot drift.
       - name: Install pinned tools
         uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
           install: true
-          install_args: golangci-lint
+          install_args: actionlint golangci-lint
           cache: true
 
       - name: Check pinned golangci-lint

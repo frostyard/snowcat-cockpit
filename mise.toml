@@ -6,4 +6,5 @@ idiomatic_version_file_enable_tools = ["go"]
 lockfile = true
 
 [tools]
+actionlint = "1.7.12"
 golangci-lint = "2.13.1"
