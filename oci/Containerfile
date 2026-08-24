@@ -97,6 +97,12 @@ RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 COPY --chmod=0644 oci/baseline.json /usr/local/share/snowcat-cockpit/baseline.json
+# Provisioned repository tools resolve through mise shims in the read-only
+# cache (ADR-0012 §2). Providers run repository commands through a login
+# shell, and Debian's /etc/profile resets PATH, so the shims directory is
+# prepended by profile.d as well as by ENV; it is harmless when empty.
+RUN printf 'PATH=/var/lib/snowcat-cockpit/mise/shims:$PATH\nexport PATH\n' > /etc/profile.d/snowcat-cockpit-mise.sh \
+    && chmod 0644 /etc/profile.d/snowcat-cockpit-mise.sh
 COPY --chmod=0644 oci/claude-system-prompt.txt /usr/local/share/snowcat-cockpit/claude-system-prompt.txt
 COPY --chmod=0755 oci/entrypoint.sh /usr/local/bin/cockpit-entrypoint-codex
 COPY --chmod=0755 oci/claude-entrypoint.sh /usr/local/bin/cockpit-entrypoint-claude
@@ -106,7 +112,8 @@ COPY --chmod=0755 oci/copilot-entrypoint.sh /usr/local/bin/cockpit-entrypoint-co
 # go invocation instead of downloading a toolchain inside a lease. MISE_DATA_DIR
 # is the read-only per-repository tool cache Cockpit mounts at target
 # preparation (ADR-0012 §2); it is empty in the image.
-ENV HOME=/home/cockpit \
+ENV PATH=/var/lib/snowcat-cockpit/mise/shims:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME=/home/cockpit \
     CODEX_HOME=/home/cockpit/.codex \
     CLAUDE_CONFIG_DIR=/home/cockpit/.claude \
     CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 \
