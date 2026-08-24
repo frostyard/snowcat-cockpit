@@ -63,6 +63,8 @@ assert_contains "$profile_path" '[mcp_servers."snowcat-cockpit"]'
 assert_contains "$profile_path" 'command = "/workspace/.agents/bin/snowcat-cockpit"'
 assert_contains "$profile_path" 'args = ["worker", "lease-proxy", "--worker", "worker-0123456789abcdef", "--workspace", "/workspace"]'
 assert_contains "$profile_path" 'required = true'
+assert_contains "$profile_path" 'env_vars = ["SNOWCAT_MCP_URL", "SNOWCAT_MCP_TOKEN"]'
+assert_not_contains "$profile_path" 'SNOWCAT_MCP_TOKEN ='
 [[ "$(stat -c '%a' "$profile_path")" == "600" ]] || fail "Codex worker profile is not mode 0600"
 if write_codex_worker_profile "$profile_root/invalid.config.toml" 'snowcat"]' "worker-0123456789abcdef" >/dev/null 2>&1; then
   fail "Codex worker profile accepted an invalid direct MCP server name"

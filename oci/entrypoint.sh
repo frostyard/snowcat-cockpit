@@ -24,6 +24,12 @@ write_codex_worker_profile() {
     printf '[mcp_servers."snowcat-cockpit"]\n'
     printf 'command = "/workspace/.agents/bin/snowcat-cockpit"\n'
     printf 'args = ["worker", "lease-proxy", "--worker", "%s", "--workspace", "/workspace"]\n' "$worker_id"
+    # Codex starts MCP servers with a scrubbed environment; the relay reads its
+    # Snowcat endpoint and token from the environment and exits at start
+    # without them ("connection closed: initialize response"). env_vars
+    # forwards the named variables from Codex's own environment — names only,
+    # so no value enters this file.
+    printf 'env_vars = ["SNOWCAT_MCP_URL", "SNOWCAT_MCP_TOKEN"]\n'
     printf 'required = true\n'
   } >"$profile_path"
 }

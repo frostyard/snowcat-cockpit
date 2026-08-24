@@ -177,7 +177,10 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    invocation and registers only the projected Cockpit binary's stdio lease
    relay. Codex writes a mode-`0600`, credential-free invocation profile below
    its tmpfs `CODEX_HOME`; that profile disables the validated direct server,
-   registers the relay with its argument array as TOML, marks the relay required,
+   registers the relay with its argument array as TOML, forwards only the
+   names `SNOWCAT_MCP_URL` and `SNOWCAT_MCP_TOKEN` to it through `env_vars`
+   (Codex starts MCP servers with a scrubbed environment and the relay reads
+   both from its own; no value enters the file), marks the relay required,
    and is selected with `--profile`. Codex uses
    `codex exec --dangerously-bypass-approvals-and-sandbox` and its role-pinned
    model. Copilot uses non-interactive `--prompt`, `--allow-all`, disabled
