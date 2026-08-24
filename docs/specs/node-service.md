@@ -127,6 +127,37 @@ Delegate=yes
 | Unit `ExecStart` | Atomic `current` selection plus explicit serve arguments |
 | Service environment | Fixed non-secret allowlist plus observer and worker credential paths |
 
+## Upgrading across a worker-kit change
+
+A release whose embedded worker kit (`internal/profile/worker-kit`,
+`worker-kit.lock.json`) differs from the installed one MUST be rolled out in
+this order; each step exists because skipping it was observed to fail on
+2026-08-24 (snowcat-cockpit#5):
+
+1. Build the release and run `node install` with the same `--listen`,
+   `--state-dir`, `--skills-dir`, `--source-root`, `--observer-env`, and
+   `--worker-env` values as `install.json`, with the current `service.env`
+   sourced so every allowlisted value (including the image references)
+   carries over. The restart this performs **stops any running board
+   campaign**; managed workers and workspaces are retained.
+2. Replace the node's kit directory (`<skills-dir>`, normally
+   `<state-dir>/worker-kit`): `InstallKit` refuses to overwrite drifted
+   skills there exactly as it does in a checkout, so move the old directory
+   aside and run `install-kit --skills-dir <skills-dir>` until `profiles`
+   reports the kit `ready` at the new revision.
+3. Re-run `preflight --provider <name> --mcp-server <name> --repository
+   <owner/name>` for every provider a campaign uses: receipts are bound to
+   the kit revision, every provider reads "not structurally ready" until
+   then, and a campaign that refreshes first backs the provider off for
+   five minutes.
+4. Start the campaign again (`POST /api/v1/campaign` with the previous
+   request) once `profiles` shows every lane's provider `ready`.
+
+A Snowcat skill change therefore always costs a Cockpit release plus these
+four steps before the snowcat lane (whose checkout carries the canonical
+skills) launches again; Snowcat's repository tooling rollout plan tracks
+removing that coupling.
+
 ## References
 
 - Rationale: [ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md)
