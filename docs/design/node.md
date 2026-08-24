@@ -165,6 +165,9 @@ explicit persistent exception to that one-shot boundary. A
 local node, refreshes provider preflight, and refills bounded role capacity from
 fresh observations until the operator stops it. Cockpit repository enrollment
 is local execution configuration, not a copy of Snowcat control-plane state.
+The campaign also refreshes and re-pins a managed repository immediately before
+each implementer launch, so a long-running campaign never spends an
+implementation attempt from its startup base snapshot.
 
 Worker lifecycle and work-attempt lifecycle are deliberately distinct. A
 `running` worker record means that its provider process is still alive; it does

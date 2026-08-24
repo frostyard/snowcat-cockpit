@@ -105,9 +105,15 @@ execution-side signals do not infer a Snowcat work outcome.
    counted. Claimable work is queued work plus claimed work whose newest
    Snowcat attempt is expired. Repository iteration is sorted and round-robin
    by pass.
-6. Every launch uses the repository's prepared immutable base commit and the
-   campaign's exact adapter, runtime, and lane provider. The worker independently
-   claims at most one item through Snowcat MCP.
+6. Every launch uses a repository's prepared immutable base commit and the
+   campaign's exact adapter, runtime, and lane provider. Immediately before
+   every implementer launch, the controller MUST run the managed repository
+   setup contract again and pass that successful setup's newly pinned commit
+   to the worker. A failed refresh MUST prevent the launch and back off that
+   repository's implementer lane for at least five minutes. Discoverer and
+   reviewer launches MAY use the campaign's current prepared commit because
+   they are read-only or replace it with the claimed pull request's exact head.
+   The worker independently claims at most one item through Snowcat MCP.
 7. A setup, preflight, observation, or launch failure records only a sanitized
    message. Setup, preflight, and launch retry no sooner than five minutes.
    Cockpit tracks every campaign worker through provider exit and then performs

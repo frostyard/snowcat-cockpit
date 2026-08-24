@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,20 +17,37 @@ import (
 )
 
 type fakeRepositories struct {
-	records []managedrepo.Record
+	mu           sync.Mutex
+	records      []managedrepo.Record
+	setupCalls   []string
+	setupCommits map[string][]string
+	setupErrors  map[string]error
 }
 
 func (repositories *fakeRepositories) List(context.Context) ([]managedrepo.Record, error) {
+	repositories.mu.Lock()
+	defer repositories.mu.Unlock()
 	return append([]managedrepo.Record(nil), repositories.records...), nil
 }
 
 func (repositories *fakeRepositories) Setup(_ context.Context, repository string) (managedrepo.Record, error) {
-	for _, record := range repositories.records {
+	repositories.mu.Lock()
+	defer repositories.mu.Unlock()
+	repositories.setupCalls = append(repositories.setupCalls, repository)
+	for index, record := range repositories.records {
 		if record.Repository == repository {
+			if err := repositories.setupErrors[repository]; err != nil {
+				return record, err
+			}
 			now := time.Date(2026, 8, 21, 23, 0, 0, 0, time.UTC)
 			record.Status = managedrepo.StatusReady
-			record.BaseCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			record.BaseCommit = strings.Repeat("a", 40)
+			if commits := repositories.setupCommits[repository]; len(commits) != 0 {
+				record.BaseCommit = commits[0]
+				repositories.setupCommits[repository] = commits[1:]
+			}
 			record.PreparedAt = &now
+			repositories.records[index] = record
 			return record, nil
 		}
 	}
@@ -163,6 +181,102 @@ func TestCampaignLaunchesAcrossEveryEnrolledRepositoryAndLane(t *testing.T) {
 	defer preflights.mu.Unlock()
 	if len(preflights.calls) != 2 {
 		t.Fatalf("preflight calls = %q, want one per distinct provider", preflights.calls)
+	}
+}
+
+func TestCampaignRepinsManagedBaseImmediatelyBeforeEveryImplementerLaunch(t *testing.T) {
+	repository := managedrepo.Record{
+		Repository: "frostyard/firn", Source: "/sources/firn",
+		BaseCommit: strings.Repeat("a", 40), Status: managedrepo.StatusReady,
+	}
+	freshCommits := []string{strings.Repeat("b", 40), strings.Repeat("c", 40)}
+	repositories := &fakeRepositories{
+		records:      []managedrepo.Record{repository},
+		setupCommits: map[string][]string{repository.Repository: append([]string(nil), freshCommits...)},
+	}
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
+		repository.Repository: {queueview.RoleImplementer: 2},
+	}}
+	workers := &fakeWorkers{}
+	controller := newTestController(t, repositories, &fakePreflights{}, queue, workers)
+	controller.record.Status = StatusRunning
+	controller.record.Request = validRequest()
+	controller.record.Request.Implementer.Capacity = 2
+	controller.record.Repositories = []RepositoryStatus{{
+		Repository: repository.Repository, Source: repository.Source, BaseCommit: repository.BaseCommit, Status: StatusRunning,
+	}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	repositories.mu.Lock()
+	if len(repositories.setupCalls) != 2 {
+		repositories.mu.Unlock()
+		t.Fatalf("base refresh calls = %q, want one per implementer launch", repositories.setupCalls)
+	}
+	repositories.mu.Unlock()
+	workers.mu.Lock()
+	if len(workers.launched) != 2 {
+		workers.mu.Unlock()
+		t.Fatalf("launches = %d, want two", len(workers.launched))
+	}
+	for index, launch := range workers.launched {
+		if launch.BaseRef != freshCommits[index] {
+			workers.mu.Unlock()
+			t.Fatalf("launch %d base = %q, want refreshed %q", index, launch.BaseRef, freshCommits[index])
+		}
+	}
+	workers.mu.Unlock()
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Repositories[0].BaseCommit != freshCommits[1] {
+		t.Fatalf("campaign base = %q, want newest %q", record.Repositories[0].BaseCommit, freshCommits[1])
+	}
+}
+
+func TestCampaignRefusesImplementerLaunchWhenBaseRefreshFails(t *testing.T) {
+	repository := managedrepo.Record{
+		Repository: "frostyard/firn", Source: "/sources/firn",
+		BaseCommit: strings.Repeat("a", 40), Status: managedrepo.StatusReady,
+	}
+	repositories := &fakeRepositories{
+		records:     []managedrepo.Record{repository},
+		setupErrors: map[string]error{repository.Repository: errors.New("refresh unavailable")},
+	}
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
+		repository.Repository: {queueview.RoleImplementer: 1},
+	}}
+	workers := &fakeWorkers{}
+	controller := newTestController(t, repositories, &fakePreflights{}, queue, workers)
+	controller.record.Status = StatusRunning
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository, Status: StatusRunning}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if len(workers.launched) != 0 {
+		t.Fatalf("launches = %d, want none after failed base refresh", len(workers.launched))
+	}
+	if !controller.inBackoff(repository.Repository, queueview.RoleImplementer) {
+		t.Fatal("failed base refresh did not back off the implementer lane")
+	}
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusDegraded || record.Repositories[0].Detail != "implementer base refresh failed; retry is backed off" {
+		t.Fatalf("campaign = %#v, want degraded base-refresh blocker", record)
 	}
 }
 

@@ -60,6 +60,15 @@ runtime, provider, model, source, and immutable base. A launch failure stops
 that repository/role for the current tick. The next tick may retry after the
 minimum interval.
 
+The immutable base is refreshed at the point where staleness costs work:
+immediately before every implementer launch, the controller reruns managed
+repository setup and launches from the commit pinned by that successful
+refresh. It never spends an implementation attempt from the campaign-start
+snapshot. Refresh failure is a visible repository blocker and backs off that
+implementer lane; it does not fall back to the older commit. Discoverers remain
+read-only, while reviewers replace the prepared base with the claimed pull
+request's exact head before review.
+
 Provider proof is demand-driven after campaign start. A receipt approaching
 expiry is refreshed only when fresh observation finds eligible work for that
 provider; an idle campaign does not periodically invoke coding agents merely

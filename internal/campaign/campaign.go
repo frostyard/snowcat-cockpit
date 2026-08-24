@@ -571,10 +571,18 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 					})
 					continue
 				}
+				launchRepository := repository
+				if role == queueview.RoleImplementer {
+					var refreshed bool
+					launchRepository, refreshed = controller.refreshImplementationBase(ctx, repository)
+					if !refreshed {
+						continue
+					}
+				}
 				record, launchErr := controller.workers.Launch(ctx, worker.LaunchRequest{
 					Adapter: controller.request().Adapter, Runtime: controller.request().Runtime,
-					Provider: lane.Provider, MCPServer: lane.MCPServer, Role: string(role), Repository: repository.Repository,
-					Source: repository.Source, BaseRef: repository.BaseCommit,
+					Provider: lane.Provider, MCPServer: lane.MCPServer, Role: string(role), Repository: launchRepository.Repository,
+					Source: launchRepository.Source, BaseRef: launchRepository.BaseCommit,
 				})
 				if launchErr != nil {
 					controller.setBackoff(repository.Repository, role)
@@ -597,6 +605,23 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		}
 	}
 	controller.setReconciledStatus()
+}
+
+func (controller *Controller) refreshImplementationBase(ctx context.Context, repository managedrepo.Record) (managedrepo.Record, bool) {
+	refreshed, err := controller.repositories.Setup(ctx, repository.Repository)
+	if err != nil || refreshed.Status != managedrepo.StatusReady || refreshed.BaseCommit == "" || refreshed.PreparedAt == nil || refreshed.Repository != repository.Repository || refreshed.Source != repository.Source {
+		controller.setBackoff(repository.Repository, queueview.RoleImplementer)
+		controller.updateRepository(repository.Repository, func(state *RepositoryStatus) {
+			state.Status = StatusDegraded
+			state.Detail = "implementer base refresh failed; retry is backed off"
+		})
+		return managedrepo.Record{}, false
+	}
+	controller.updateRepository(repository.Repository, func(state *RepositoryStatus) {
+		state.Source = refreshed.Source
+		state.BaseCommit = refreshed.BaseCommit
+	})
+	return refreshed, true
 }
 
 func (controller *Controller) addLaunchProbe(workerID, repository string, role queueview.Role) {
