@@ -156,6 +156,15 @@ func TestRunNodeHelpDoesNotCallService(t *testing.T) {
 	}
 }
 
+func TestRunHelpListsServeSourceRoot(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run([]string{"help"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), "serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>] [--source-root <directory>]") {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+}
+
 func healthyNodeServiceResult() nodeservice.Result {
 	health := nodeservice.Health{Status: "ok", NodeID: "node-0123456789abcdef0123456789abcdef", Version: "test-version"}
 	return nodeservice.Result{

@@ -1213,7 +1213,7 @@ func printUsage(output io.Writer) {
   snowcat-cockpit worker target --worker <id> --repository <owner/name> --item <uuid> --kind <kind> --pull-request <url> --head <sha> [--json]
   snowcat-cockpit worker push-target --worker <id> [--json]
   snowcat-cockpit worker observe|attach|stop|cleanup [options] <worker-id>
-  snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
+  snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>] [--source-root <directory>]
   snowcat-cockpit version
   snowcat-cockpit help`)
 }
