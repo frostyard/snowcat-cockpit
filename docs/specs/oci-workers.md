@@ -78,7 +78,10 @@ credential from Cockpit configuration.
 
 The first-slice command baseline is deliberately small: the base shell and
 Unix utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
-patch, jq, ripgrep, unzip, and `column`. A new tool enters this list only after
+patch, jq, ripgrep, unzip, and `column`. Cockpit projects the exact running
+`snowcat-cockpit` binary into the already-mounted worker workspace for
+worker-local target preparation; it is not an independently versioned image
+tool. A new tool enters this list only after
 a repository contract or retained worker terminal demonstrates the need.
 Commands that a provider runs through a login shell MUST still resolve `go` and
 `gofmt` through `/usr/local/bin`; `GOPATH` and `GOCACHE` MUST live beneath the
@@ -170,6 +173,7 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
 | Artifact | Derivation |
 | --- | --- |
 | Container name | `cockpit-<worker-id>` |
+| Worker target helper | Exact running Cockpit binary projected under the private `.agents` workspace tree |
 | Codex OCI image | [`oci/Containerfile`](../../oci/Containerfile) and [`oci/entrypoint.sh`](../../oci/entrypoint.sh) |
 | Claude OCI image | [`oci/Claude.Containerfile`](../../oci/Claude.Containerfile), [`oci/claude-entrypoint.sh`](../../oci/claude-entrypoint.sh), [`oci/claude-mcp.json`](../../oci/claude-mcp.json), and [`oci/claude-system-prompt.txt`](../../oci/claude-system-prompt.txt) |
 | Copilot OCI image | [`oci/Copilot.Containerfile`](../../oci/Copilot.Containerfile) and [`oci/copilot-entrypoint.sh`](../../oci/copilot-entrypoint.sh) |

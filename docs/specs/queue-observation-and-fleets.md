@@ -173,24 +173,22 @@ state and Snowcat work state remain distinct.
 
 Classification is deterministic and case-sensitive:
 
-| Work kind | Role |
-| --- | --- |
-| suffix `-discovery` | `discoverer` |
-| exact `pr-review` | `reviewer` |
-| exact `pr-cure`, `pr-cure-change`, or `pr-review-fix` | `unassigned` (temporarily unsupported by Cockpit workers) |
-| exact `release-needed` | `unassigned` (human-operated) |
-| every other kind | `implementer` |
+Work-kind routing follows the ordered, runtime-generated
+[role/kind classifier table](worker-profiles.md#role-boundaries). The first
+matching row wins. `release-needed` is the only currently unassigned exact
+kind and remains human-operated.
 
 The implementer rule is exclusion-based because Snowcat work kinds are open:
-`implementation`, `issue-resolution`, fixes other than `pr-review-fix`, and
-future worker kinds remain eligible. Cockpit does not turn the human-operated
-`release-needed` preparation item into fleet capacity. Until Cockpit can target
-the pull-request branch bound to a claimed item, `pr-cure`, `pr-cure-change`,
-and `pr-review-fix` also remain outside implementer capacity.
+`implementation`, `issue-resolution`, `pr-review-fix`, `pr-cure`,
+`pr-cure-change`, and future worker kinds remain eligible. Cockpit does not
+turn the human-operated `release-needed` preparation item into fleet capacity.
+Existing-pull-request kinds use the exact target protocol in the
+[managed-worker contract](managed-workers.md#rules) after claim.
 
-A contract is suspicious when `requiredArtifact: pull-request` lacks
-`open-pr`, or when `write` authority does not carry both `open-pr` and
-`requiredArtifact: pull-request`. An absent `requiredArtifact` is unknown.
+A contract is suspicious when `requiredArtifact: pull-request` lacks either
+`write` or `open-pr`, or when `write` authority does not carry both `open-pr`
+and `requiredArtifact: pull-request`. `open-pr` never implies `write`. An
+absent `requiredArtifact` is unknown.
 
 ## Rules
 

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/frostyard/snowcat-cockpit/internal/queueview"
 )
 
 func TestInstallKitMaterializesEmbeddedSkillsAndIsIdempotent(t *testing.T) {
@@ -51,6 +53,12 @@ func TestInstallKitMaterializesEmbeddedSkillsAndIsIdempotent(t *testing.T) {
 	}
 	if len(snapshot.Roles) != 3 || snapshot.Roles[0].ID != "discoverer" || snapshot.Roles[0].KindSuffix != "-discovery" {
 		t.Fatalf("roles = %#v", snapshot.Roles)
+	}
+	if snapshot.Roles[1].Selection != queueview.RoleSelection(queueview.RoleImplementer) {
+		t.Fatalf("implementer selection = %q", snapshot.Roles[1].Selection)
+	}
+	if len(snapshot.Roles[2].ExactKinds) != 1 || snapshot.Roles[2].ExactKinds[0] != "pr-review" {
+		t.Fatalf("reviewer kinds = %#v", snapshot.Roles[2].ExactKinds)
 	}
 }
 

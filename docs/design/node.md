@@ -79,10 +79,10 @@ The initial roles are:
   explicitly declare Snowcat's delivery contract; operator admission remains
   in Snowcat.
 - **Implementer:** derives exact kinds from the live queue and accepts every
-  worker kind except `*-discovery`, exact `pr-review`, `pr-review-fix`,
-  `pr-cure`, `pr-cure-change`, and human-operated `release-needed`. The cure
-  and review-fix exclusions remain until Cockpit can target a claimed item's
-  bound pull-request branch; other future worker kinds remain eligible.
+  worker kind except `*-discovery`, exact `pr-review`, and human-operated
+  `release-needed`. Cure and review-fix work prepares the exact pull-request
+  head after claim and uses a moved-head-safe push helper; other future worker
+  kinds remain eligible through the classifier fallback.
 - **Reviewer:** receives only exact `pr-review` and uses Snowcat's canonical
   review-only lifecycle.
 
@@ -100,7 +100,12 @@ The first host slice creates a unique `cockpit/<worker-id>` branch from an
 operator-selected local commit, installs the locked kit into the isolated
 worktree, and hides only those generated skill paths from Git through
 process-local configuration. It does not fetch or infer a remote default
-branch. Its lifecycle follows the [managed-worker contract](../specs/managed-workers.md).
+branch. After a worker directly claims work bound to an existing pull request,
+the worker-local Cockpit helper verifies GitHub's exact head, prepares that
+tree without changing the unique local branch name, and records the non-secret
+target projection. Reviews use a detached exact head; writes push only through
+an exact force-with-lease. Its lifecycle follows the
+[managed-worker contract](../specs/managed-workers.md).
 
 The OCI adapter runs Codex, Claude, or Copilot once per container with a non-root user,
 a runtime-specific SHA-256-pinned local image, a self-contained local Git clone,

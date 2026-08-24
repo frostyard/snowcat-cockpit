@@ -38,6 +38,14 @@ The manager returns a non-secret record:
   "baseRef": "HEAD",
   "baseCommit": "<commit>",
   "branch": "cockpit/worker-<hex>",
+  "itemId": "claimed item UUID when an existing pull request is targeted",
+  "workKind": "pr-cure|pr-cure-change|pr-review|pr-review-fix when targeted",
+  "pullRequestUrl": "bound pull request when targeted",
+  "targetRepository": "GitHub head repository when targeted",
+  "targetBranch": "GitHub head branch when targeted",
+  "targetHead": "40-hex head bound at claim time when targeted",
+  "targetMode": "branch|detached when targeted",
+  "targetedAt": "RFC3339 or omitted",
   "status": "allocating|running|exited|failed|stopped|cleaned",
   "createdAt": "RFC3339",
   "startedAt": "RFC3339 or omitted",
@@ -52,6 +60,8 @@ CLI operations:
 ```text
 snowcat-cockpit workers [--json] [--state-dir <directory>]
 snowcat-cockpit worker launch --adapter <host|oci> --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+snowcat-cockpit worker target --worker <id> --repository <owner/name> --item <uuid> --kind <kind> --pull-request <url> --head <sha>
+snowcat-cockpit worker push-target --worker <id>
 snowcat-cockpit worker observe [--json] [--state-dir <directory>] <worker-id>
 snowcat-cockpit worker attach [--state-dir <directory>] <worker-id>
 snowcat-cockpit worker stop [--state-dir <directory>] <worker-id>
@@ -80,25 +90,40 @@ HTTP operations:
 2. Launch MUST install the locked skills into `.agents/skills` and
    `.claude/skills` in the isolated worktree and hide only those Cockpit-owned
    paths from the worker's Git commands through process-local Git configuration.
+   It MUST also copy the exact running Cockpit executable to the private
+   `.agents/bin/snowcat-cockpit` path used by the role prompt, so host and OCI
+   workers invoke the node's matching target protocol without relying on
+   `PATH` or an independently versioned image copy.
 3. The role prompt MUST identify the stable worker ID, select only the role's
    exact bounded kinds, claim at most one item, and tell the provider to stop
    after reporting the result. A discoverer MUST remain read-only, select only
    `*-discovery`, and declare `requiredArtifact` on every proposed child. An
    implementer MUST release a claimed change item before substantive work when
-   `open-pr` or `requiredArtifact: pull-request` is absent; the role requires a
-   deliverable pull-request artifact and never widens the item's authority.
+   `write`, `open-pr`, or `requiredArtifact: pull-request` is absent; the role
+   requires a deliverable pull-request artifact, never infers `write` from
+   `open-pr`, and never widens the item's authority.
    Its claim set is the exact observed claimable kinds—queued plus claimed
    items whose newest attempt is expired—after excluding discovery, review,
    and human-operated `release-needed` work; it MUST NOT use a closed
-   implementation-kind whitelist. The worker MUST keep the preallocated
-   current branch. When `open-pr` and `requiredArtifact: pull-request` are both present,
-   Cockpit's prompt MUST state that the operator has authorized committing,
-   pushing that branch, and opening the required draft pull request without a
-   second permission prompt. Every role prompt MUST request a 3600-second
+   implementation-kind whitelist. For ordinary new-pull-request work, the
+   worker MUST keep the preallocated current branch. When `write`, `open-pr`, and
+   `requiredArtifact: pull-request` are all present, Cockpit's prompt MUST
+   state that the operator has authorized committing and the item's required
+   delivery without a second permission prompt. Every role prompt MUST request a 3600-second
    claim lease, renew it immediately after claim, and renew it before and after
    installs, builds, tests, and network steps. A worker that learns its lease
    is no longer active MUST stop before any further repository or GitHub
-   mutation.
+   mutation. Immediately after claiming `pr-cure`, `pr-cure-change`,
+   `pr-review`, or `pr-review-fix`, the worker MUST call `worker target` with
+   the claimed item's exact non-secret ID, kind, pull-request URL, and bound
+   head before inspecting or changing the tree. `pr-cure-change` resolves the
+   binding from its root `pr-cure` item. Missing metadata or a moved head MUST
+   cause release without substantive work. Review targets MUST be detached at
+   the exact head. Writable targets MUST keep the unique local Cockpit branch
+   but reset it to the exact bound head; every push MUST use `worker
+   push-target`, which rechecks GitHub and uses an exact force-with-lease
+   against the last observed head. Ordinary `git push` is forbidden for bound
+   work.
 4. Each worker MUST use the dedicated tmux topology from
    [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md) with
    `remain-on-exit` enabled before the provider starts.
@@ -106,8 +131,9 @@ HTTP operations:
    inherited environment values into tmux arguments, logs, records, or API
    responses.
 6. A launch record MUST contain no provider credential, MCP credential, lease
-   token, terminal content, provider output, environment dump, or Snowcat queue
-   record.
+   token, terminal content, provider output, environment dump, or complete
+   Snowcat queue record. It MAY persist only the non-secret existing-PR target
+   projection listed above after the helper has verified the workspace.
 7. Stop MUST address one exact worker and MUST retain its workspace and record.
 8. Cleanup MUST be explicit, MUST refuse a running or dirty workspace, MUST
    remove only byte-matching Cockpit skill files, and MUST retain a `cleaned`
@@ -148,6 +174,8 @@ HTTP operations:
 | --- | --- |
 | Worker role prompt | Worker ID, repository, and locked profile role |
 | Workspace branch | `cockpit/<worker-id>` |
+| Existing-PR target marker | Private `.agents/cockpit-target.json`, verified and imported into the durable worker record |
+| Existing-PR push lease | Last GitHub head observed by `worker target` or a successful `worker push-target` |
 | tmux socket | Private short runtime directory plus node and worker IDs |
 | Dashboard worker inventory | `GET /api/v1/workers` |
 | Live Snowcat work state | Explicit `worker observe` or dashboard action; never persisted |

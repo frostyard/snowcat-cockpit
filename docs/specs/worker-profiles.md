@@ -63,16 +63,31 @@ MCP starts `unchecked`; a current successful
 
 ## Role boundaries
 
-| Role | Canonical skill | Queue selection |
+Queue classification is ordered and generated from Cockpit's runtime
+classifier. The first matching row wins. Run
+`go generate ./internal/queueview` after changing the classifier.
+
+<!-- BEGIN GENERATED ROLE/KIND CLASSIFICATION -->
+
+| Ordered kind match | Role |
+| --- | --- |
+| suffix `-discovery` | `discoverer` |
+| exact `pr-review` | `reviewer` |
+| exact `release-needed` | `unassigned` |
+| every other kind | `implementer` |
+
+<!-- END GENERATED ROLE/KIND CLASSIFICATION -->
+
+| Role | Canonical skill | Execution boundary |
 | --- | --- | --- |
-| `discoverer` | `work-snowcat-queue` | Kinds ending in `-discovery` only; read-only assessment with at most one proposed child |
-| `implementer` | `work-snowcat-queue` | Every non-discovery worker kind except exact `pr-review`, `pr-review-fix`, `pr-cure`, `pr-cure-change`, and `release-needed` |
-| `reviewer` | `review-snowcat-queue` | Exact `pr-review` only |
+| `discoverer` | `work-snowcat-queue` | Read-only assessment with at most one proposed child |
+| `implementer` | `work-snowcat-queue` | One authorized delivery item from the classifier fallback |
+| `reviewer` | `review-snowcat-queue` | One independent review with a structured verdict |
 
 The locked kit also carries `work-snowcat-without-reviews` for canonical
-Snowcat completeness, but the default implementer profile does not use it: its
-selection gate admits discovery work, while the proven Cockpit operating rule
-is deliberately fix-only plus cure work.
+Snowcat completeness, but the default implementer profile does not use it.
+The implementer profile receives only kinds that reach the ordered classifier's
+`every other kind` fallback.
 
 ## Rules
 

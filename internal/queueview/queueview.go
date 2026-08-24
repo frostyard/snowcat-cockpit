@@ -381,6 +381,9 @@ func assessContract(requiredArtifact string, allowedActions []string) (string, s
 		hasWrite = hasWrite || action == "write"
 		hasOpenPR = hasOpenPR || action == "open-pr"
 	}
+	if requiredArtifact == "pull-request" && !hasWrite {
+		return "suspicious", "pull-request delivery lacks write authority"
+	}
 	if requiredArtifact == "pull-request" && !hasOpenPR {
 		return "suspicious", "pull-request delivery lacks open-pr authority"
 	}
@@ -388,19 +391,6 @@ func assessContract(requiredArtifact string, allowedActions []string) (string, s
 		return "suspicious", "write authority lacks a complete pull-request delivery contract"
 	}
 	return "ready", ""
-}
-
-func Classify(kind string) Role {
-	switch {
-	case strings.HasSuffix(kind, "-discovery"):
-		return RoleDiscoverer
-	case kind == "pr-review":
-		return RoleReviewer
-	case kind == "release-needed", kind == "pr-cure", kind == "pr-cure-change", kind == "pr-review-fix":
-		return RoleUnassigned
-	default:
-		return RoleImplementer
-	}
 }
 
 type rpcRequest struct {

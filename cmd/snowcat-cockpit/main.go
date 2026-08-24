@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -122,12 +123,16 @@ func runWorkers(args []string, stdout, stderr io.Writer) int {
 
 func runWorker(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "worker requires launch, observe, attach, stop, or cleanup")
+		fmt.Fprintln(stderr, "worker requires launch, target, push-target, observe, attach, stop, or cleanup")
 		return 2
 	}
 	switch args[0] {
 	case "launch":
 		return runWorkerLaunch(args[1:], stdout, stderr)
+	case "target":
+		return runWorkerTarget(args[1:], stdout, stderr)
+	case "push-target":
+		return runWorkerPushTarget(args[1:], stdout, stderr)
 	case "observe":
 		return runWorkerObserve(args[1:], stdout, stderr)
 	case "attach", "stop", "cleanup":
@@ -136,6 +141,87 @@ func runWorker(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unknown worker action %q\n", args[0])
 		return 2
 	}
+}
+
+func runWorkerTarget(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("worker target", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workerID := flags.String("worker", "", "managed worker ID")
+	repository := flags.String("repository", "", "claimed Snowcat repository as owner/name")
+	itemID := flags.String("item", "", "claimed Snowcat item ID")
+	kind := flags.String("kind", "", "claimed pull-request-bound work kind")
+	pullRequestURL := flags.String("pull-request", "", "bound GitHub pull-request URL")
+	headSHA := flags.String("head", "", "bound 40-hex pull-request head")
+	jsonOutput := flags.Bool("json", false, "write the prepared target as JSON")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "worker target accepts no positional arguments")
+		return 2
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve worker target directory: %v\n", err)
+		return 1
+	}
+	target, err := worker.PrepareTarget(context.Background(), worker.TargetRequest{
+		WorkerID: *workerID, Repository: *repository, ItemID: *itemID, Kind: *kind,
+		PullRequestURL: *pullRequestURL, HeadSHA: *headSHA,
+	}, directory, worker.OSRunner{}, exec.LookPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "prepare worker target: %v\n", err)
+		return 1
+	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(target); err != nil {
+			fmt.Fprintf(stderr, "write worker target: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Fprintf(stdout, "%s prepared %s at %s (%s)\n", target.WorkerID, target.PullRequestURL, target.BoundHead, target.Mode)
+	if target.Mode == worker.TargetModeBranch {
+		fmt.Fprintln(stdout, "Use the exact push-target helper named in the worker prompt for every push.")
+	}
+	return 0
+}
+
+func runWorkerPushTarget(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("worker push-target", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workerID := flags.String("worker", "", "managed worker ID")
+	jsonOutput := flags.Bool("json", false, "write the push result as JSON")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "worker push-target accepts no positional arguments")
+		return 2
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve worker target directory: %v\n", err)
+		return 1
+	}
+	result, err := worker.PushTarget(context.Background(), *workerID, directory, worker.OSRunner{}, exec.LookPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "push worker target: %v\n", err)
+		return 1
+	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			fmt.Fprintf(stderr, "write worker target push: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Fprintf(stdout, "pushed %s from %s to %s on %s\n", result.PullRequestURL, result.PreviousHead, result.PushedHead, result.TargetBranch)
+	return 0
 }
 
 func runWorkerObserve(args []string, stdout, stderr io.Writer) int {
@@ -712,9 +798,14 @@ func newWorkerManager(stateDirectory, skillsDirectory string) (*worker.Manager, 
 }
 
 func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState state.Node) (*worker.Manager, error) {
+	targetHelper, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("resolve Cockpit target helper: %w", err)
+	}
 	return worker.New(worker.Config{
 		StateDirectory: stateDirectory,
 		NodeID:         nodeState.NodeID,
+		TargetHelper:   targetHelper,
 		OCI: worker.OCIConfig{
 			Images: map[string]string{
 				"codex":   firstNonempty(os.Getenv("SNOWCAT_COCKPIT_OCI_CODEX_IMAGE"), os.Getenv("SNOWCAT_COCKPIT_OCI_IMAGE")),
@@ -854,6 +945,8 @@ func printUsage(output io.Writer) {
   snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
   snowcat-cockpit workers [--json] [--state-dir <directory>]
   snowcat-cockpit worker launch [--adapter host|oci] [--runtime podman|docker] --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+  snowcat-cockpit worker target --worker <id> --repository <owner/name> --item <uuid> --kind <kind> --pull-request <url> --head <sha> [--json]
+  snowcat-cockpit worker push-target --worker <id> [--json]
   snowcat-cockpit worker observe|attach|stop|cleanup [options] <worker-id>
   snowcat-cockpit serve [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>]
   snowcat-cockpit version

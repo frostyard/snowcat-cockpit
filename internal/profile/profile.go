@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/frostyard/snowcat-cockpit/internal/queueview"
 )
 
 const maxSkillBytes int64 = 1 << 20
@@ -122,30 +124,37 @@ var providerDefinitions = []providerDefinition{
 	{id: "copilot", label: "Copilot", executable: "copilot"},
 }
 
-var roles = []Role{
-	{
-		ID:          "discoverer",
-		Label:       "Discoverer",
-		Skill:       "work-snowcat-queue",
-		Selection:   "kinds ending in -discovery only",
-		KindSuffix:  "-discovery",
-		Description: "Claims one read-only discovery item and proposes at most one bounded child for operator admission.",
-	},
-	{
-		ID:          "implementer",
-		Label:       "Implementer",
-		Skill:       "work-snowcat-queue",
-		Selection:   "all queued kinds except *-discovery, pr-review, and human release-needed",
-		Description: "Claims one bounded worker delivery item and delivers only within its authority.",
-	},
-	{
-		ID:          "reviewer",
-		Label:       "Reviewer",
-		Skill:       "review-snowcat-queue",
-		Selection:   "exact pr-review only",
-		ExactKinds:  []string{"pr-review"},
-		Description: "Claims one independent pull-request review and reports a structured verdict.",
-	},
+var roles = buildRoles()
+
+func buildRoles() []Role {
+	discoverer, _ := queueview.ClassificationRuleFor(queueview.RoleDiscoverer)
+	implementer, _ := queueview.ClassificationRuleFor(queueview.RoleImplementer)
+	reviewer, _ := queueview.ClassificationRuleFor(queueview.RoleReviewer)
+	return []Role{
+		{
+			ID:          string(discoverer.Role),
+			Label:       "Discoverer",
+			Skill:       "work-snowcat-queue",
+			Selection:   queueview.RoleSelection(discoverer.Role),
+			KindSuffix:  discoverer.Suffix,
+			Description: "Claims one read-only discovery item and proposes at most one bounded child for operator admission.",
+		},
+		{
+			ID:          string(implementer.Role),
+			Label:       "Implementer",
+			Skill:       "work-snowcat-queue",
+			Selection:   queueview.RoleSelection(implementer.Role),
+			Description: "Claims one bounded worker delivery item and delivers only within its authority.",
+		},
+		{
+			ID:          string(reviewer.Role),
+			Label:       "Reviewer",
+			Skill:       "review-snowcat-queue",
+			Selection:   queueview.RoleSelection(reviewer.Role),
+			ExactKinds:  append([]string(nil), reviewer.ExactKinds...),
+			Description: "Claims one independent pull-request review and reports a structured verdict.",
+		},
+	}
 }
 
 func Inspect(skillsDirectory string) Snapshot {

@@ -83,7 +83,7 @@ func TestHTTPObserverTakesOneBoundedClaimableSnapshot(t *testing.T) {
 	if snapshot.ObservedAt != now || snapshot.Truncated || len(snapshot.Items) != 7 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
-	if snapshot.Counts[RoleDiscoverer] != 1 || snapshot.Counts[RoleImplementer] != 2 || snapshot.Counts[RoleReviewer] != 1 || snapshot.Counts[RoleUnassigned] != 2 || snapshot.Flagged != 1 {
+	if snapshot.Counts[RoleDiscoverer] != 1 || snapshot.Counts[RoleImplementer] != 3 || snapshot.Counts[RoleReviewer] != 1 || snapshot.Counts[RoleUnassigned] != 1 || snapshot.Flagged != 1 {
 		t.Fatalf("counts = %#v", snapshot.Counts)
 	}
 	if snapshot.Items[1].RequiredArtifact != "pull-request" || snapshot.Items[1].Role != RoleImplementer || snapshot.Items[1].Contract != "ready" {
@@ -92,7 +92,7 @@ func TestHTTPObserverTakesOneBoundedClaimableSnapshot(t *testing.T) {
 	if snapshot.Items[0].Contract != "ready" {
 		t.Fatalf("discovery contract = %#v", snapshot.Items[0])
 	}
-	if snapshot.Items[6].ID != "7" || snapshot.Items[6].Kind != "pr-review-fix" || snapshot.Items[6].Role != RoleUnassigned {
+	if snapshot.Items[6].ID != "7" || snapshot.Items[6].Kind != "pr-review-fix" || snapshot.Items[6].Role != RoleImplementer {
 		t.Fatalf("expired claim = %#v", snapshot.Items[6])
 	}
 }
@@ -195,8 +195,16 @@ func TestFirstSSEDataSupportsMultilineDataAndCRLF(t *testing.T) {
 func TestContractAssessmentFlagsChangeWorkWithoutDeliveryAuthority(t *testing.T) {
 	t.Parallel()
 	status, detail := assessContract("pull-request", []string{"read", "write", "run-tests"})
-	if status != "suspicious" || detail == "" {
+	if status != "suspicious" || detail != "pull-request delivery lacks open-pr authority" {
 		t.Fatalf("assessment = %q, %q", status, detail)
+	}
+	status, detail = assessContract("pull-request", []string{"read", "open-pr"})
+	if status != "suspicious" || detail != "pull-request delivery lacks write authority" {
+		t.Fatalf("no-write assessment = %q, %q", status, detail)
+	}
+	status, detail = assessContract("pull-request", []string{"read", "write", "open-pr"})
+	if status != "ready" || detail != "" {
+		t.Fatalf("complete assessment = %q, %q", status, detail)
 	}
 	status, detail = assessContract("", []string{"read"})
 	if status != "unknown" || detail == "" {
@@ -244,9 +252,9 @@ func TestClassify(t *testing.T) {
 		"docs-drift-discovery": RoleDiscoverer,
 		"quality-gap-fix":      RoleImplementer,
 		"implementation":       RoleImplementer,
-		"pr-review-fix":        RoleUnassigned,
-		"pr-cure":              RoleUnassigned,
-		"pr-cure-change":       RoleUnassigned,
+		"pr-review-fix":        RoleImplementer,
+		"pr-cure":              RoleImplementer,
+		"pr-cure-change":       RoleImplementer,
 		"pr-review":            RoleReviewer,
 		"release-needed":       RoleUnassigned,
 		"issue-resolution":     RoleImplementer,

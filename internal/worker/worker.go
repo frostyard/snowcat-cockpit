@@ -90,6 +90,14 @@ type Record struct {
 	BaseRef        string     `json:"baseRef"`
 	BaseCommit     string     `json:"baseCommit"`
 	Branch         string     `json:"branch"`
+	ItemID         string     `json:"itemId,omitempty"`
+	WorkKind       string     `json:"workKind,omitempty"`
+	PullRequestURL string     `json:"pullRequestUrl,omitempty"`
+	TargetRepo     string     `json:"targetRepository,omitempty"`
+	TargetBranch   string     `json:"targetBranch,omitempty"`
+	TargetHead     string     `json:"targetHead,omitempty"`
+	TargetMode     string     `json:"targetMode,omitempty"`
+	TargetedAt     *time.Time `json:"targetedAt,omitempty"`
 	Status         string     `json:"status"`
 	Detail         string     `json:"detail"`
 	CreatedAt      time.Time  `json:"createdAt"`
@@ -148,6 +156,7 @@ func (OSRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 type Config struct {
 	StateDirectory string
 	NodeID         string
+	TargetHelper   string
 	Runner         Runner
 	Ready          func(string) error
 	LookPath       func(string) (string, error)
@@ -183,6 +192,7 @@ type Manager struct {
 	random         io.Reader
 	environment    func() []string
 	oci            OCIConfig
+	targetHelper   string
 	consoles       map[string]*consoleProcess
 	mutex          sync.Mutex
 }
@@ -209,6 +219,14 @@ func New(config Config) (*Manager, error) {
 	if config.Environment == nil {
 		config.Environment = os.Environ
 	}
+	var targetHelper string
+	if config.TargetHelper != "" {
+		resolved, err := canonicalExecutable(config.TargetHelper)
+		if err != nil {
+			return nil, fmt.Errorf("%w: target helper: %v", ErrInvalid, err)
+		}
+		targetHelper = resolved
+	}
 	parentEnvironment := config.Environment
 	return &Manager{
 		stateDirectory: config.StateDirectory,
@@ -220,6 +238,7 @@ func New(config Config) (*Manager, error) {
 		random:         config.Random,
 		environment:    func() []string { return workerEnvironment(parentEnvironment()) },
 		oci:            config.OCI,
+		targetHelper:   targetHelper,
 		consoles:       make(map[string]*consoleProcess),
 	}, nil
 }
@@ -332,6 +351,13 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 			return manager.fail(record, "locked worker kit installation failed", err)
 		}
 	}
+	targetHelperCommand := "snowcat-cockpit"
+	if manager.targetHelper != "" {
+		targetHelperCommand, err = installTargetHelper(manager.targetHelper, workspace)
+		if err != nil {
+			return manager.fail(record, "worker target helper installation failed", err)
+		}
+	}
 	excludePath, err := manager.writeExcludes(workerID)
 	if err != nil {
 		return manager.fail(record, "Git exclusion setup failed", err)
@@ -342,7 +368,7 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 		}
 	}
 	environment := gitEnvironment(manager.environment(), excludePath)
-	prompt := BuildPrompt(workerID, request.Role, request.Repository)
+	prompt := buildPrompt(workerID, request.Role, request.Repository, targetHelperCommand)
 	launchCommand := []string{providerPath, prompt}
 	if request.Adapter == AdapterOCI {
 		launchCommand = append([]string{runtimeSelection.Path}, manager.ociArguments(record, runtimeSelection.Image, prompt)...)
@@ -449,6 +475,10 @@ func (manager *Manager) List(ctx context.Context) ([]Record, error) {
 		return nil, err
 	}
 	for index := range records {
+		records[index], err = manager.syncTarget(ctx, records[index])
+		if err != nil {
+			return nil, err
+		}
 		records[index] = manager.reconcile(ctx, records[index])
 	}
 	sort.Slice(records, func(left, right int) bool {
@@ -468,6 +498,10 @@ func (manager *Manager) Get(ctx context.Context, workerID string) (Record, error
 	if err != nil {
 		return Record{}, err
 	}
+	record, err = manager.syncTarget(ctx, record)
+	if err != nil {
+		return Record{}, err
+	}
 	return manager.reconcile(ctx, record), nil
 }
 
@@ -476,6 +510,10 @@ func (manager *Manager) Stop(ctx context.Context, workerID string) (Record, erro
 	defer manager.mutex.Unlock()
 
 	record, err := manager.read(workerID)
+	if err != nil {
+		return Record{}, err
+	}
+	record, err = manager.syncTarget(ctx, record)
 	if err != nil {
 		return Record{}, err
 	}
@@ -500,6 +538,10 @@ func (manager *Manager) Cleanup(ctx context.Context, workerID string) (Record, e
 	defer manager.mutex.Unlock()
 
 	record, err := manager.read(workerID)
+	if err != nil {
+		return Record{}, err
+	}
+	record, err = manager.syncTarget(ctx, record)
 	if err != nil {
 		return Record{}, err
 	}
@@ -708,14 +750,20 @@ func (manager *Manager) AttachCommand(ctx context.Context, workerID string) (Com
 }
 
 func BuildPrompt(workerID, role, repository string) string {
+	return buildPrompt(workerID, role, repository, "snowcat-cockpit")
+}
+
+func buildPrompt(workerID, role, repository, targetHelper string) string {
 	leaseDiscipline := "Request leaseSeconds 3600 when claiming. Immediately after a claim, call heartbeat_work with leaseSeconds 3600. Call heartbeat_work with leaseSeconds 3600 before and after every install, build, test, or network step; do not begin another step when ten minutes have passed since the last successful heartbeat. If a heartbeat reports that the lease is no longer active, stop immediately without further repository or GitHub mutation."
+	targetCommand := targetHelper + " worker target"
+	pushCommand := targetHelper + " worker push-target"
 	if role == "discoverer" {
 		return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only kinds ending in -discovery for repository %s. Claim at most one item. %s Treat it as read-only discovery: do not edit files or open a GitHub artifact. Complete with concrete evidence and at most one bounded follow-up when justified. Every follow-up must declare requiredArtifact: use pull-request with write and open-pr for a change, or none for read-only work. Report the result to Snowcat, then stop.", workerID, repository, leaseDiscipline)
 	}
 	if role == "reviewer" {
-		return fmt.Sprintf("Use the review-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only pr-review items for repository %s. Claim at most one item. %s Report its structured verdict to Snowcat, then stop.", workerID, repository, leaseDiscipline)
+		return fmt.Sprintf("Use the review-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. Work only pr-review items for repository %s. Claim at most one item. %s Immediately after a claim and before reading the diff or running checks, run %s --worker %s --repository %s --item <claimed item id> --kind pr-review --pull-request <review.pullRequestUrl> --head <review.headSha>. This checks out the exact bound head detached and records it. If metadata is absent or target preparation refuses a moved head, release the item as undeliverable and stop. Do not switch away from the detached target. Report its structured verdict to Snowcat, then stop.", workerID, repository, leaseDiscipline, targetCommand, workerID, repository)
 	}
-	return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. For repository %s, list queued work once and claimed work once. Derive the exact claimable kind set from queued items plus claimed items whose newest attempt outcome is expired, excluding kinds ending in -discovery and exact pr-review, pr-cure, pr-cure-change, pr-review-fix, and release-needed, and claim at most one item with only that set. %s Do not use a fixed implementation-kind whitelist; implementation, issue-resolution, fixes other than pr-review-fix, and future worker kinds are eligible. Pull-request cures and review fixes remain excluded until Cockpit can target the bound pull-request branch; release-needed remains human-operated. The workspace is already isolated on a Cockpit-owned branch: do not create, rename, or switch branches. Before substantive work on any change item, require both open-pr in allowedActions and requiredArtifact pull-request; if either is absent, release the item immediately as undeliverable and stop. When both are present, they are explicit operator authorization to commit, push the current branch, and open the required draft pull request without asking for further permission. Complete the item within its allowed actions, report the commit and pull-request artifacts to Snowcat, then stop.", workerID, repository, leaseDiscipline)
+	return fmt.Sprintf("Use the work-snowcat-queue skill. Use worker identity %s for Snowcat lifecycle calls. For repository %s, list queued work once and claimed work once. Derive the exact claimable kind set from queued items plus claimed items whose newest attempt outcome is expired, excluding kinds ending in -discovery and exact pr-review and release-needed, and claim at most one item with only that set. %s Do not use a fixed implementation-kind whitelist; implementation, issue-resolution, fixes including pr-review-fix, pr-cure, pr-cure-change, and future worker kinds are eligible. Release-needed remains human-operated. Before substantive work on any change item, require both write and open-pr in allowedActions and requiredArtifact pull-request; if any is absent, release the item immediately as undeliverable and stop. Never infer write authority from open-pr. For pr-cure and pr-cure-change, read the root item and use its cure.pullRequestUrl and cure.headSha; for pr-review-fix use review.pullRequestUrl and review.headSha. Immediately after claiming one of those bound kinds and before inspecting or editing the tree, run %s --worker %s --repository %s --item <claimed item id> --kind <claimed kind> --pull-request <bound pull-request URL> --head <bound head SHA>. If bound metadata is absent or target preparation refuses a moved head, release the item as undeliverable and stop. The helper keeps the unique local Cockpit branch at the exact bound head and records the remote target. Commit there and use %s --worker %s for every push; never use ordinary git push for bound work. For every other implementer item, keep the preallocated branch and do not create, rename, or switch branches. When write, open-pr, and requiredArtifact pull-request are all present, they authorize committing and delivery without a second permission prompt: bound work updates its existing pull request through push-target, while new-PR work pushes the current branch and opens the required draft pull request. Complete the item within its allowed actions, report the commit and pull-request artifacts to Snowcat, then stop.", workerID, repository, leaseDiscipline, targetCommand, workerID, repository, pushCommand, workerID)
 }
 
 func validateRequest(request *LaunchRequest) error {
@@ -1023,6 +1071,63 @@ func canonicalDirectory(path string) (string, error) {
 	return resolved, nil
 }
 
+func canonicalExecutable(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", errors.New("not an executable regular file")
+	}
+	return resolved, nil
+}
+
+func installTargetHelper(source, workspace string) (string, error) {
+	directory := filepath.Join(workspace, ".agents", "bin")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", fmt.Errorf("create worker target helper directory: %w", err)
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return "", fmt.Errorf("open worker target helper: %w", err)
+	}
+	defer input.Close()
+	temporary, err := os.CreateTemp(directory, ".snowcat-cockpit-*")
+	if err != nil {
+		return "", fmt.Errorf("create temporary worker target helper: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if _, err := io.Copy(temporary, input); err != nil {
+		_ = temporary.Close()
+		return "", fmt.Errorf("copy worker target helper: %w", err)
+	}
+	if err := temporary.Chmod(0o700); err != nil {
+		_ = temporary.Close()
+		return "", fmt.Errorf("secure worker target helper: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return "", fmt.Errorf("sync worker target helper: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return "", fmt.Errorf("close worker target helper: %w", err)
+	}
+	destination := filepath.Join(directory, "snowcat-cockpit")
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return "", fmt.Errorf("install worker target helper: %w", err)
+	}
+	return ".agents/bin/snowcat-cockpit", nil
+}
+
 func newWorkerID(random io.Reader) (string, error) {
 	value := make([]byte, 8)
 	if _, err := io.ReadFull(random, value); err != nil {
@@ -1072,6 +1177,65 @@ func (manager *Manager) reconcile(ctx context.Context, record Record) Record {
 		record.Detail = "provider exited; terminal and workspace retained"
 	}
 	return record
+}
+
+func (manager *Manager) syncTarget(ctx context.Context, record Record) (Record, error) {
+	if record.TargetedAt != nil {
+		return record, nil
+	}
+	target, exists, err := readTarget(record.Workspace)
+	if err != nil {
+		return Record{}, err
+	}
+	if !exists {
+		return record, nil
+	}
+	if target.WorkerID != record.ID || target.Repository != record.Repository {
+		return Record{}, fmt.Errorf("%w: worker target does not match its durable record", ErrConflict)
+	}
+	gitPath, err := manager.lookPath("git")
+	if err != nil {
+		return Record{}, fmt.Errorf("sync worker target requires git: %w", err)
+	}
+	excludePath, err := manager.writeExcludes(record.ID)
+	if err != nil {
+		return Record{}, err
+	}
+	environment := gitEnvironment(manager.environment(), excludePath)
+	output, err := manager.run(ctx, gitPath, record.Workspace, environment, "rev-parse", "HEAD^{commit}")
+	if err != nil {
+		return Record{}, fmt.Errorf("inspect prepared worker target: %w", err)
+	}
+	currentHead := strings.ToLower(strings.TrimSpace(string(output)))
+	if !headSHARE.MatchString(currentHead) {
+		return Record{}, fmt.Errorf("%w: prepared worker target has an invalid Git head", ErrConflict)
+	}
+	if target.Mode == TargetModeDetached {
+		if currentHead != target.BoundHead {
+			return Record{}, fmt.Errorf("%w: detached review target moved from its bound head", ErrConflict)
+		}
+	} else {
+		output, err := manager.run(ctx, gitPath, record.Workspace, environment, "branch", "--show-current")
+		if err != nil || strings.TrimSpace(string(output)) != target.LocalBranch {
+			return Record{}, fmt.Errorf("%w: prepared worker target is not on its Cockpit branch", ErrConflict)
+		}
+		if _, err := manager.run(ctx, gitPath, record.Workspace, environment, "merge-base", "--is-ancestor", target.BoundHead, currentHead); err != nil {
+			return Record{}, fmt.Errorf("%w: prepared worker target does not descend from its bound head", ErrConflict)
+		}
+	}
+	now := manager.now().UTC()
+	record.ItemID = target.ItemID
+	record.WorkKind = target.Kind
+	record.PullRequestURL = target.PullRequestURL
+	record.TargetRepo = target.TargetRepository
+	record.TargetBranch = target.TargetBranch
+	record.TargetHead = target.BoundHead
+	record.TargetMode = target.Mode
+	record.TargetedAt = &now
+	if err := manager.write(record); err != nil {
+		return Record{}, err
+	}
+	return record, nil
 }
 
 func (manager *Manager) tmuxExists(ctx context.Context, tmuxPath string, record Record) bool {
@@ -1294,6 +1458,25 @@ func validateRecord(record Record) error {
 	}
 	if record.CreatedAt.IsZero() || record.Workspace == "" || record.Source == "" {
 		return errors.New("decode worker record: incomplete lifecycle")
+	}
+	if record.TargetedAt == nil {
+		if record.ItemID != "" || record.WorkKind != "" || record.PullRequestURL != "" || record.TargetRepo != "" || record.TargetBranch != "" || record.TargetHead != "" || record.TargetMode != "" {
+			return errors.New("decode worker record: incomplete pull-request target")
+		}
+	} else {
+		target := Target{
+			Version: targetVersion, WorkerID: record.ID, Repository: record.Repository,
+			ItemID: record.ItemID, Kind: record.WorkKind, PullRequestURL: record.PullRequestURL,
+			BoundHead: record.TargetHead, LeaseHead: record.TargetHead,
+			TargetRepository: record.TargetRepo, TargetBranch: record.TargetBranch,
+			Mode: record.TargetMode,
+		}
+		if record.TargetMode == TargetModeBranch {
+			target.LocalBranch = record.Branch
+		}
+		if err := validateTarget(target); err != nil {
+			return errors.New("decode worker record: invalid pull-request target")
+		}
 	}
 	return nil
 }

@@ -28,6 +28,8 @@ type fakeRunner struct {
 	ahead          int
 	behind         int
 	dockerSecurity string
+	currentBranch  string
+	currentHead    string
 }
 
 type loggingRunner struct {
@@ -149,6 +151,8 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 	switch {
 	case strings.Contains(arguments, "rev-parse\x00--show-toplevel"):
 		return []byte(runner.source + "\n"), nil
+	case arguments == "rev-parse\x00HEAD^{commit}":
+		return []byte(runner.currentHead + "\n"), nil
 	case strings.Contains(arguments, "rev-parse\x00--verify"):
 		return []byte(runner.baseCommit + "\n"), nil
 	case strings.Contains(arguments, "rev-parse\x00--abbrev-ref\x00--symbolic-full-name"):
@@ -224,6 +228,10 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 			return []byte(" M changed.go\n"), nil
 		}
 		return nil, nil
+	case arguments == "branch\x00--show-current":
+		return []byte(runner.currentBranch + "\n"), nil
+	case strings.Contains(arguments, "merge-base\x00--is-ancestor"):
+		return nil, nil
 	case strings.Contains(arguments, "worktree\x00remove"):
 		return nil, os.RemoveAll(command.Arguments[len(command.Arguments)-1])
 	default:
@@ -239,11 +247,16 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 	if err := os.Mkdir(source, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	targetHelper := filepath.Join(root, "snowcat-cockpit")
+	if err := os.WriteFile(targetHelper, []byte("target-helper-fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("a", 40)}
 	now := time.Date(2026, 8, 21, 17, 30, 0, 0, time.UTC)
 	manager, err := New(Config{
 		StateDirectory: filepath.Join(root, "state"),
 		NodeID:         "node-0123456789abcdef0123456789abcdef",
+		TargetHelper:   targetHelper,
 		Runner:         runner,
 		Ready:          func(string) error { return nil },
 		LookPath:       func(name string) (string, error) { return "/tools/" + name, nil },
@@ -274,6 +287,13 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 	if _, err := os.Stat(filepath.Join(record.Workspace, ".agents", "skills", "work-snowcat-queue", "SKILL.md")); err != nil {
 		t.Fatalf("locked worker kit not installed: %v", err)
 	}
+	installedHelper := filepath.Join(record.Workspace, ".agents", "bin", "snowcat-cockpit")
+	if content, err := os.ReadFile(installedHelper); err != nil || string(content) != "target-helper-fixture" {
+		t.Fatalf("worker target helper = %q, %v", content, err)
+	}
+	if info, err := os.Stat(installedHelper); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("worker target helper mode = %v, %v", info, err)
+	}
 	stored, err := os.ReadFile(manager.recordPath(record.ID))
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +313,7 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 		t.Fatal("Cockpit observer configuration entered the worker environment")
 	}
 	joined := strings.Join(launchCommand.Arguments, "\n")
-	if !strings.Contains(joined, "work-snowcat-queue") || !strings.Contains(joined, record.ID) || !strings.Contains(joined, "-fix") {
+	if !strings.Contains(joined, "work-snowcat-queue") || !strings.Contains(joined, record.ID) || !strings.Contains(joined, "-fix") || !strings.Contains(joined, ".agents/bin/snowcat-cockpit worker target") {
 		t.Fatalf("bounded prompt missing from tmux launch: %s", joined)
 	}
 
@@ -330,6 +350,62 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 	if _, err := os.Stat(manager.recordPath(record.ID)); err != nil {
 		t.Fatalf("cleaned lifecycle record was not retained: %v", err)
 	}
+}
+
+func TestManagerPersistsPreparedPullRequestTarget(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	boundHead := strings.Repeat("a", 40)
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("b", 40)}
+	now := time.Date(2026, 8, 23, 16, 0, 0, 0, time.UTC)
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-target-test", Runner: runner,
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Now:      nowUTC(now), Random: bytes.NewReader([]byte("target!!")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Provider: "codex", Role: "implementer", Repository: "frostyard/firn", Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.currentBranch = record.Branch
+	runner.currentHead = boundHead
+	if err := writeTarget(record.Workspace, Target{
+		Version: targetVersion, WorkerID: record.ID, Repository: record.Repository,
+		ItemID: "01234567-89ab-cdef-0123-456789abcdef", Kind: "pr-cure-change",
+		PullRequestURL: "https://github.com/frostyard/firn/pull/42",
+		BoundHead:      boundHead, LeaseHead: boundHead, TargetRepository: "frostyard/firn",
+		TargetBranch: "feature/cure", LocalBranch: record.Branch, Mode: TargetModeBranch,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := manager.Get(context.Background(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ItemID == "" || got.WorkKind != "pr-cure-change" || got.TargetBranch != "feature/cure" || got.TargetHead != boundHead || got.TargetedAt == nil {
+		t.Fatalf("targeted record = %#v", got)
+	}
+	stored, err := manager.read(record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TargetedAt == nil || stored.PullRequestURL != "https://github.com/frostyard/firn/pull/42" {
+		t.Fatalf("stored record = %#v", stored)
+	}
+}
+
+func nowUTC(value time.Time) func() time.Time {
+	return func() time.Time { return value }
 }
 
 func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T) {
@@ -935,13 +1011,13 @@ func TestBuildPromptPinsRoleSelections(t *testing.T) {
 		}
 	}
 	implementer := BuildPrompt("worker-1234567890abcdef", "implementer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery", "exact pr-review, pr-cure, pr-cure-change, pr-review-fix, and release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "target the bound pull-request branch", "do not create, rename, or switch branches", "requiredArtifact pull-request", "explicit operator authorization", "push the current branch", "without asking for further permission", "leaseSeconds 3600", "before and after every install, build, test, or network step", "lease is no longer active", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery and exact pr-review and release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix, pr-cure, pr-cure-change", "worker target", "cure.pullRequestUrl", "review.pullRequestUrl", "refuses a moved head", "push-target", "never use ordinary git push", "do not create, rename, or switch branches", "write and open-pr in allowedActions", "requiredArtifact pull-request", "Never infer write authority from open-pr", "without a second permission prompt", "leaseSeconds 3600", "before and after every install, build, test, or network step", "lease is no longer active", "at most one"} {
 		if !strings.Contains(implementer, expected) {
 			t.Fatalf("implementer prompt missing %q: %s", expected, implementer)
 		}
 	}
 	reviewer := BuildPrompt("worker-1234567890abcdef", "reviewer", "frostyard/firn")
-	if !strings.Contains(reviewer, "review-snowcat-queue") || !strings.Contains(reviewer, "only pr-review") || !strings.Contains(reviewer, "leaseSeconds 3600") {
+	if !strings.Contains(reviewer, "review-snowcat-queue") || !strings.Contains(reviewer, "only pr-review") || !strings.Contains(reviewer, "leaseSeconds 3600") || !strings.Contains(reviewer, "worker target") || !strings.Contains(reviewer, "exact bound head detached") || !strings.Contains(reviewer, "release the item") {
 		t.Fatalf("reviewer prompt = %s", reviewer)
 	}
 }
