@@ -184,6 +184,30 @@ func TestCampaignLaunchesAcrossEveryEnrolledRepositoryAndLane(t *testing.T) {
 	}
 }
 
+func TestCampaignStopSurfacesPersistenceFailureWhileStillCancellingAndRetaining(t *testing.T) {
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, &fakeQueue{counts: map[string]map[queueview.Role]int{}}, &fakeWorkers{})
+	controller.record.Status = StatusRunning
+	controller.statePath = filepath.Join(t.TempDir(), "missing-directory", "campaign.json")
+	cancelled := false
+	controller.cancel = func() { cancelled = true }
+
+	_, err := controller.Stop(context.Background())
+	if err == nil {
+		t.Fatal("Stop error = nil, want board-campaign stop persistence failure surfaced")
+	}
+	if !cancelled {
+		t.Fatal("Stop did not cancel future reconciliation despite the persistence failure")
+	}
+
+	record, getErr := controller.Get(context.Background())
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if record.Status != StatusStopping {
+		t.Fatalf("status after failed stop persistence = %q, want %q (workers/workspaces stay retained, not force-stopped)", record.Status, StatusStopping)
+	}
+}
+
 func TestCampaignRepinsManagedBaseImmediatelyBeforeEveryImplementerLaunch(t *testing.T) {
 	repository := managedrepo.Record{
 		Repository: "frostyard/firn", Source: "/sources/firn",

@@ -258,12 +258,15 @@ func (controller *Controller) Stop(_ context.Context) (Record, error) {
 	controller.record.Status = StatusStopping
 	controller.record.Detail = "stopping future campaign reconciliation; workers remain retained"
 	controller.record.UpdatedAt = controller.now().UTC()
-	_ = controller.write(controller.record)
+	writeErr := controller.write(controller.record)
 	cancel := controller.cancel
 	record := cloneRecord(controller.record)
 	controller.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if writeErr != nil {
+		return record, fmt.Errorf("persist board campaign stopping state: %w", writeErr)
 	}
 	return record, nil
 }
