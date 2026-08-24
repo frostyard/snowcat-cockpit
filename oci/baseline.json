@@ -30,6 +30,8 @@
   },
   "environment": {
     "GOTOOLCHAIN": "local",
+    "GOPATH": "/tmp/go (exec tmpfs; the home tmpfs is noexec under Docker)",
+    "GOCACHE": "/tmp/go-build (same)",
     "MISE_DATA_DIR": "/var/lib/snowcat-cockpit/mise",
     "PATH": "/var/lib/snowcat-cockpit/mise/shims first, then the image binaries; also set by /etc/profile.d/snowcat-cockpit-mise.sh for login shells"
   }
