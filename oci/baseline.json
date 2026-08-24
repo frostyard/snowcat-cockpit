@@ -24,10 +24,6 @@
     "claude": "2.1.239",
     "copilot": "1.0.80"
   },
-  "stopgap": {
-    "golangci-lint": "2.13.1",
-    "$comment": "Leaves the base once every enrolled repository pins it in mise.lock (Snowcat rollout plan, Phase 6)."
-  },
   "environment": {
     "GOTOOLCHAIN": "local",
     "GOPATH": "/tmp/go (exec tmpfs; the home tmpfs is noexec under Docker)",
