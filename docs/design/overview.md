@@ -2,7 +2,8 @@
 
 Living document. Rationale:
 [ADR-0001](../adr/0001-keep-cockpit-outside-snowcat.md),
-[ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md).
+[ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
+[ADR-0010](../adr/0010-bind-managed-leases-to-worker-liveness.md).
 Contracts: [launcher CLI](../specs/launcher-cli.md),
 [node CLI and HTTP API](../specs/node-api.md).
 
@@ -41,19 +42,20 @@ Cockpit remains execution-side convenience:
 - it stops a tmux window when explicitly asked.
 
 The worker remains the coding-agent client. It reads its existing provider
-credentials and MCP configuration, calls Snowcat directly, owns the lease token
-returned by `claim_work`, changes its checkout, and reports its result. Cockpit
-does not sit in that protocol path.
+credentials, owns the lease token returned by `claim_work`, changes its
+checkout, and reports its result. A generic or legacy-spike worker calls
+Snowcat through its existing MCP configuration. A production managed worker
+uses a worker-local stdio relay from the exact Cockpit executable projected
+into its workspace. That relay forwards to Snowcat and renews a short lease
+only while the provider retains it. The Cockpit node does not sit in that
+protocol path, receive the lease token, or infer queue state from the relay.
 
 ## Architecture
 
 ```text
-                               existing MCP configuration
-                                          │
-                                          ▼
 operator ──► snowcat-cockpit ──► tmux window ──► coding-agent worker
     │                                  │                 │
-    │                                  │                 ├──► Snowcat /mcp
+    │                                  │                 ├──► worker-local MCP relay ──► Snowcat /mcp
     │                                  │                 ├──► checkout
     │                                  │                 └──► GitHub
     │                                  │

@@ -20,6 +20,7 @@ type Request struct {
 	Adapter    string `json:"adapter,omitempty"`
 	Runtime    string `json:"runtime,omitempty"`
 	Provider   string `json:"provider"`
+	MCPServer  string `json:"mcpServer,omitempty"`
 	Role       string `json:"role"`
 	Repository string `json:"repository"`
 	Source     string `json:"source"`
@@ -113,6 +114,7 @@ func (controller *Controller) Launch(ctx context.Context, request Request) (Resu
 			Adapter:    request.Adapter,
 			Runtime:    request.Runtime,
 			Provider:   request.Provider,
+			MCPServer:  request.MCPServer,
 			Role:       request.Role,
 			Repository: request.Repository,
 			Source:     request.Source,

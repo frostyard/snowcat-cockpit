@@ -44,7 +44,6 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-COPY --chmod=0644 oci/claude-mcp.json /usr/local/share/snowcat-cockpit/claude-mcp.json
 COPY --chmod=0644 oci/claude-system-prompt.txt /usr/local/share/snowcat-cockpit/claude-system-prompt.txt
 COPY --chmod=0755 oci/claude-entrypoint.sh /usr/local/bin/cockpit-entrypoint
 

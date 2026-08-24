@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  printf 'cockpit-entrypoint: expected one bounded worker prompt and one pinned model\n' >&2
+if [[ $# -ne 4 ]]; then
+  printf 'cockpit-entrypoint: expected one bounded worker prompt, one pinned model, one worker identity, and one MCP server name\n' >&2
   exit 64
 fi
 
@@ -26,4 +26,7 @@ exec codex exec \
   --dangerously-bypass-approvals-and-sandbox \
   --model "$2" \
   --cd /workspace \
+  --config "mcp_servers.$4.enabled=false" \
+  --config 'mcp_servers.snowcat-cockpit.command="/workspace/.agents/bin/snowcat-cockpit"' \
+  --config "mcp_servers.snowcat-cockpit.args=[\"worker\",\"lease-proxy\",\"--worker\",\"$3\",\"--workspace\",\"/workspace\"]" \
   "$1"

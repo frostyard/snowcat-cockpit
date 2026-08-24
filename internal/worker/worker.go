@@ -62,12 +62,14 @@ var (
 	imageIDRE    = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._/:@-]*@)?sha256:[0-9a-f]{64}$`)
 	scpRemoteRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^[:space:]]+$`)
 	dockerHostRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$`)
+	mcpServerRE  = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
 type LaunchRequest struct {
 	Adapter    string `json:"adapter,omitempty"`
 	Runtime    string `json:"runtime,omitempty"`
 	Provider   string `json:"provider"`
+	MCPServer  string `json:"mcpServer,omitempty"`
 	Role       string `json:"role"`
 	Repository string `json:"repository"`
 	Source     string `json:"source"`
@@ -82,6 +84,7 @@ type Record struct {
 	Runtime        string     `json:"runtime,omitempty"`
 	RuntimePosture string     `json:"runtimePosture,omitempty"`
 	Provider       string     `json:"provider"`
+	MCPServer      string     `json:"mcpServer,omitempty"`
 	Model          string     `json:"model,omitempty"`
 	Role           string     `json:"role"`
 	Repository     string     `json:"repository"`
@@ -159,6 +162,7 @@ type Config struct {
 	TargetHelper   string
 	Runner         Runner
 	Ready          func(string) error
+	ReadyMCP       func(string, string) error
 	LookPath       func(string) (string, error)
 	Now            func() time.Time
 	Random         io.Reader
@@ -186,7 +190,7 @@ type Manager struct {
 	stateDirectory string
 	nodeID         string
 	runner         Runner
-	ready          func(string) error
+	ready          func(string, string) error
 	lookPath       func(string) (string, error)
 	now            func() time.Time
 	random         io.Reader
@@ -204,8 +208,11 @@ func New(config Config) (*Manager, error) {
 	if config.Runner == nil {
 		config.Runner = OSRunner{}
 	}
-	if config.Ready == nil {
-		config.Ready = func(string) error { return nil }
+	if config.ReadyMCP == nil {
+		if config.Ready == nil {
+			config.Ready = func(string) error { return nil }
+		}
+		config.ReadyMCP = func(provider, _ string) error { return config.Ready(provider) }
 	}
 	if config.LookPath == nil {
 		config.LookPath = exec.LookPath
@@ -232,7 +239,7 @@ func New(config Config) (*Manager, error) {
 		stateDirectory: config.StateDirectory,
 		nodeID:         config.NodeID,
 		runner:         config.Runner,
-		ready:          config.Ready,
+		ready:          config.ReadyMCP,
 		lookPath:       config.LookPath,
 		now:            config.Now,
 		random:         config.Random,
@@ -261,8 +268,14 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	if err := validateRequest(&request); err != nil {
 		return Record{}, err
 	}
-	if err := manager.ready(request.Provider); err != nil {
+	if err := manager.ready(request.Provider, request.MCPServer); err != nil {
 		return Record{}, fmt.Errorf("%w: %v", ErrNotReady, err)
+	}
+	if !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_URL") {
+		return Record{}, fmt.Errorf("%w: SNOWCAT_MCP_URL is not present in the node environment", ErrNotReady)
+	}
+	if !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_TOKEN") {
+		return Record{}, fmt.Errorf("%w: SNOWCAT_MCP_TOKEN is not present in the node environment", ErrNotReady)
 	}
 	gitPath, err := manager.lookPath("git")
 	if err != nil {
@@ -319,7 +332,7 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	record := Record{
 		Version: recordVersion, ID: workerID, NodeID: manager.nodeID,
 		Adapter: request.Adapter, Runtime: request.Runtime, RuntimePosture: runtimeSelection.Posture,
-		Provider: request.Provider, Model: model, Role: request.Role, Repository: request.Repository,
+		Provider: request.Provider, MCPServer: request.MCPServer, Model: model, Role: request.Role, Repository: request.Repository,
 		Source: source, Workspace: workspace, BaseRef: request.BaseRef,
 		BaseCommit: baseCommit, Branch: branch, Status: StatusAllocating,
 		Detail: "allocating isolated Git workspace", CreatedAt: now,
@@ -369,12 +382,14 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	}
 	environment := gitEnvironment(manager.environment(), excludePath)
 	prompt := buildPrompt(workerID, request.Role, request.Repository, targetHelperCommand)
-	launchCommand := []string{providerPath, prompt}
+	hostRelayHelper := targetHelperCommand
+	if manager.targetHelper != "" {
+		hostRelayHelper = filepath.Join(workspace, filepath.FromSlash(targetHelperCommand))
+	}
+	launchCommand := hostProviderCommand(request.Provider, request.MCPServer, providerPath, prompt, hostRelayHelper, workerID, workspace)
 	if request.Adapter == AdapterOCI {
 		launchCommand = append([]string{runtimeSelection.Path}, manager.ociArguments(record, runtimeSelection.Image, prompt)...)
 		environment = ociHostEnvironment(environment)
-	} else if request.Provider == "copilot" {
-		launchCommand = []string{providerPath, "-i", prompt}
 	}
 	if err := manager.startTmux(ctx, tmuxPath, record, launchCommand, environment); err != nil {
 		return manager.fail(record, "tmux provider launch failed", err)
@@ -753,8 +768,53 @@ func BuildPrompt(workerID, role, repository string) string {
 	return buildPrompt(workerID, role, repository, "snowcat-cockpit")
 }
 
+func hostProviderCommand(provider, mcpServer, providerPath, prompt, helper, workerID, workspace string) []string {
+	relayArguments := []string{"worker", "lease-proxy", "--worker", workerID, "--workspace", workspace}
+	switch provider {
+	case "codex":
+		return []string{
+			providerPath,
+			"--config", `mcp_servers.` + mcpServer + `.enabled=false`,
+			"--config", `mcp_servers.snowcat-cockpit.command=` + strconv.Quote(helper),
+			"--config", `mcp_servers.snowcat-cockpit.args=` + jsonStringArray(relayArguments),
+			prompt,
+		}
+	case "claude":
+		return []string{providerPath, "--mcp-config", relayMCPConfig("stdio", helper, relayArguments), "--strict-mcp-config", prompt}
+	case "copilot":
+		return []string{
+			providerPath, "-i", prompt,
+			"--disable-mcp-server", mcpServer,
+			"--additional-mcp-config", relayMCPConfig("local", helper, relayArguments),
+		}
+	default:
+		return []string{providerPath, prompt}
+	}
+}
+
+func relayMCPConfig(serverType, helper string, arguments []string) string {
+	config := struct {
+		Servers map[string]struct {
+			Type    string   `json:"type"`
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}{Servers: map[string]struct {
+		Type    string   `json:"type"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+	}{"snowcat-cockpit": {Type: serverType, Command: helper, Args: arguments}}}
+	payload, _ := json.Marshal(config)
+	return string(payload)
+}
+
+func jsonStringArray(values []string) string {
+	payload, _ := json.Marshal(values)
+	return string(payload)
+}
+
 func buildPrompt(workerID, role, repository, targetHelper string) string {
-	leaseDiscipline := "Request leaseSeconds 3600 when claiming. Immediately after a claim, call heartbeat_work with leaseSeconds 3600. Call heartbeat_work with leaseSeconds 3600 before and after every install, build, test, or network step; do not begin another step when ten minutes have passed since the last successful heartbeat. If a heartbeat reports that the lease is no longer active, stop immediately without further repository or GitHub mutation."
+	leaseDiscipline := "The worker-local Cockpit relay bounds claims to 120 seconds and renews the active lease every 30 seconds only while your MCP process is alive; do not request a front-loaded lease. Continue to call heartbeat_work at the skill's normal work-step boundaries so lease loss is surfaced before more mutation. If any Snowcat tool reports SNOWCAT_COCKPIT_LEASE_LOST, stop immediately without further repository or GitHub mutation. Call the terminal lifecycle tool exactly once: the relay records separately whether complete_work was attempted and whether Snowcat acknowledged it."
 	targetCommand := targetHelper + " worker target"
 	pushCommand := targetHelper + " worker push-target"
 	if role == "discoverer" {
@@ -776,6 +836,12 @@ func validateRequest(request *LaunchRequest) error {
 	if request.BaseRef == "" {
 		request.BaseRef = "HEAD"
 	}
+	if request.MCPServer == "" {
+		request.MCPServer = "snowcat"
+		if request.Provider == "copilot" {
+			request.MCPServer = "snowcat-mcp"
+		}
+	}
 	if request.Adapter != AdapterHost && request.Adapter != AdapterOCI {
 		return fmt.Errorf("%w: adapter must be host or oci", ErrInvalid)
 	}
@@ -787,6 +853,9 @@ func validateRequest(request *LaunchRequest) error {
 	}
 	if request.Provider != "codex" && request.Provider != "claude" && request.Provider != "copilot" {
 		return fmt.Errorf("%w: unsupported provider", ErrInvalid)
+	}
+	if len(request.MCPServer) > 80 || !mcpServerRE.MatchString(request.MCPServer) {
+		return fmt.Errorf("%w: MCP server must contain only letters, digits, _, -, or dot", ErrInvalid)
 	}
 	if request.Role != "discoverer" && request.Role != "implementer" && request.Role != "reviewer" {
 		return fmt.Errorf("%w: unsupported role", ErrInvalid)
@@ -874,7 +943,7 @@ func (manager *Manager) validateOCI(ctx context.Context, request LaunchRequest) 
 	if !hasNonemptyEnvironment(manager.environment(), "GH_TOKEN") {
 		return ociRuntimeSelection{}, fmt.Errorf("%w: GH_TOKEN is not present in the node environment", ErrNotReady)
 	}
-	if request.Provider == "claude" && !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_URL") {
+	if !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_URL") {
 		return ociRuntimeSelection{}, fmt.Errorf("%w: SNOWCAT_MCP_URL is not present in the node environment", ErrNotReady)
 	}
 	return selection, nil
@@ -1028,12 +1097,10 @@ func (manager *Manager) ociArguments(record Record, image, prompt string) []stri
 	}
 	arguments = append(arguments,
 		"--env", "SNOWCAT_MCP_TOKEN",
+		"--env", "SNOWCAT_MCP_URL",
 		"--env", "GH_TOKEN",
 	)
-	if record.Provider == "claude" {
-		arguments = append(arguments, "--env", "SNOWCAT_MCP_URL")
-	}
-	return append(arguments, image, prompt, record.Model)
+	return append(arguments, image, prompt, record.Model, record.ID, record.MCPServer)
 }
 
 func ociModel(provider, role string) string {
@@ -1452,6 +1519,9 @@ func validateRecord(record Record) error {
 	}
 	if record.Provider != "codex" && record.Provider != "claude" && record.Provider != "copilot" {
 		return errors.New("decode worker record: invalid provider")
+	}
+	if record.MCPServer != "" && (len(record.MCPServer) > 80 || !mcpServerRE.MatchString(record.MCPServer)) {
+		return errors.New("decode worker record: invalid MCP server")
 	}
 	if record.Role != "discoverer" && record.Role != "implementer" && record.Role != "reviewer" {
 		return errors.New("decode worker record: invalid role")

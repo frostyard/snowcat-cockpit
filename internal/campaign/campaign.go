@@ -573,7 +573,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 				}
 				record, launchErr := controller.workers.Launch(ctx, worker.LaunchRequest{
 					Adapter: controller.request().Adapter, Runtime: controller.request().Runtime,
-					Provider: lane.Provider, Role: string(role), Repository: repository.Repository,
+					Provider: lane.Provider, MCPServer: lane.MCPServer, Role: string(role), Repository: repository.Repository,
 					Source: repository.Source, BaseRef: repository.BaseCommit,
 				})
 				if launchErr != nil {

@@ -34,6 +34,8 @@ tools.
   and MUST NOT evaluate the file as shell code;
 - set `SNOWCAT_COCKPIT_MCP_URL` to
   `https://snowcat.goat-snake.ts.net/mcp`;
+- set worker-local `SNOWCAT_MCP_URL` to the same fixed endpoint without copying
+  its value into an argument or file;
 - map the value to `SNOWCAT_COCKPIT_MCP_TOKEN`, remove
   `SNOWCAT_OBSERVER_TOKEN`, and use `exec` with preserved argument boundaries;
 - run `dist/snowcat-cockpit serve`, unless a test supplies
@@ -119,6 +121,7 @@ Fleet request:
   "adapter": "oci",
   "runtime": "docker",
   "provider": "codex",
+  "mcpServer": "snowcat",
   "role": "implementer",
   "repository": "frostyard/firn",
   "source": "/absolute/path/to/firn",
@@ -129,7 +132,8 @@ Fleet request:
 
 `adapter` MUST be exact `host` or `oci` and defaults to `host`. `runtime` MUST
 be absent for host, or exact `podman` or `docker` for OCI; it defaults to
-`podman`. `count` MUST be
+`podman`. `mcpServer` identifies the provider-local direct Snowcat server that
+the managed invocation replaces with its worker-local relay. `count` MUST be
 between 1 and 12. The node takes one new snapshot inside the
 fleet request, computes `planned = min(count, eligible-for-role)`, and invokes
 the existing managed-worker launch exactly `planned` times. The result includes

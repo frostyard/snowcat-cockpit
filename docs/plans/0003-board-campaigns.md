@@ -81,8 +81,9 @@ testing. Snowcat's parallel coverage suite then crossed the OCI adapter's
 to abort and emit dozens of large core files into retained workspaces. Cockpit
 now preinstalls Node.js 26 and npm in every provider image, gives bounded test
 workloads a four-CPU quota and measured 1024-PID ceiling, disables core files,
-and tells every role to claim and renew a 3600-second lease around long
-execution steps. An
+and now routes every managed role through a worker-local relay that renews a
+120-second lease every 30 seconds only while the provider's MCP process is
+alive. An
 explicit dashboard action correlates active workers and highlights the
 authoritative Snowcat `expired` outcome without giving Cockpit a lease token.
 The same trial proved that Snowcat's deploy tests execute command stubs from

@@ -25,6 +25,7 @@ in [org-adrs.md](org-adrs.md).
 - [0007 — Use canonical aliases for ACMM conformance](adr/0007-use-canonical-aliases-for-acmm-conformance.md)
 - [0008 — Run persistent multi-repository board campaigns](adr/0008-run-persistent-multi-repository-board-campaigns.md)
 - [0009 — Observe reclaimable Snowcat work](adr/0009-observe-reclaimable-snowcat-work.md)
+- [0010 — Bind managed leases to worker liveness](adr/0010-bind-managed-leases-to-worker-liveness.md)
 
 ### Design
 

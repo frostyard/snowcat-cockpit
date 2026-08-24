@@ -7,8 +7,10 @@ node. One Go binary presents lifecycle inventory through an embedded,
 loopback-only Pilothouse dashboard. The original Bash, tmux, and ttyd launcher
 remains available as the measured trial harness.
 
-Snowcat remains unchanged. Each worker continues to claim and report work
-through its existing MCP configuration.
+Snowcat remains unchanged. Each managed worker continues to claim and report
+work through Snowcat's existing MCP contract, with a worker-local Cockpit relay
+binding short renewal to provider liveness. Generic launcher workers retain
+their existing provider MCP configuration.
 
 Start with the [architecture](docs/design/overview.md), the
 [node design](docs/design/node.md), and the
@@ -170,6 +172,7 @@ make oci-image
 # Run the three export commands printed by make oci-image.
 read -rsp 'Snowcat worker token: ' SNOWCAT_MCP_TOKEN; echo
 export SNOWCAT_MCP_TOKEN
+export SNOWCAT_MCP_URL=https://snowcat.goat-snake.ts.net/mcp
 
 go run ./cmd/snowcat-cockpit worker launch \
   --adapter oci \
@@ -203,11 +206,11 @@ private regular non-symlink provider files at either
 `${COPILOT_HOME:-$HOME/.copilot}/mcp-config.json`, and
 `${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}/{hosts.yml,config.yml}`,
 and a current provider preflight. The worker receives only those exact
-files, its worktree, `SNOWCAT_MCP_TOKEN`, and `GH_TOKEN` by environment-variable
-name. When the checked-in serve wrapper starts with an OCI image configured, it
+files, its worktree, `SNOWCAT_MCP_TOKEN`, `SNOWCAT_MCP_URL`, and `GH_TOKEN` by
+environment-variable name. When the checked-in serve wrapper starts with an OCI image configured, it
 projects `GH_TOKEN` from the current `gh` keyring login unless the operator
-already supplied it. For Claude, it also projects the wrapper's fixed Snowcat
-URL by environment-variable name into the image-owned strict MCP configuration.
+already supplied it. It also projects the wrapper's fixed Snowcat URL by
+environment-variable name for every provider's worker-local lease relay.
 Host mode remains the default interactive path. See
 the [rootless OCI worker contract](docs/specs/oci-workers.md) for the complete
 boundary.

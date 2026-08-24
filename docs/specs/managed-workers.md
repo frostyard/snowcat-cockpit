@@ -14,6 +14,7 @@ A launch request contains:
 | `adapter` | string | no | Exact `host` or `oci`; defaults to `host` |
 | `runtime` | string | no | With `oci`, exact `podman` or `docker`; defaults to `podman`. Forbidden with `host` |
 | `provider` | string | yes | Exact `codex`, `claude`, or `copilot`; its current profile is `ready` |
+| `mcpServer` | string | no | Provider-local direct Snowcat server to replace for this invocation; defaults to `snowcat`, or `snowcat-mcp` for Copilot |
 | `role` | string | yes | Exact `discoverer`, `implementer`, or `reviewer` |
 | `repository` | string | yes | Snowcat `owner/name` slug |
 | `source` | string | yes | Existing local Git working tree used only as the worktree source |
@@ -30,6 +31,7 @@ The manager returns a non-secret record:
   "runtime": "podman or docker when adapter is oci",
   "runtimePosture": "rootless or rootful when adapter is oci",
   "provider": "claude",
+  "mcpServer": "snowcat",
   "model": "gpt-5.6-terra or omitted",
   "role": "implementer",
   "repository": "frostyard/firn",
@@ -59,7 +61,8 @@ CLI operations:
 
 ```text
 snowcat-cockpit workers [--json] [--state-dir <directory>]
-snowcat-cockpit worker launch --adapter <host|oci> --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+snowcat-cockpit worker launch --adapter <host|oci> --provider <name> [--mcp-server <name>] --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+snowcat-cockpit worker lease-proxy --worker <id> --workspace <directory>
 snowcat-cockpit worker target --worker <id> --repository <owner/name> --item <uuid> --kind <kind> --pull-request <url> --head <sha>
 snowcat-cockpit worker push-target --worker <id>
 snowcat-cockpit worker observe [--json] [--state-dir <directory>] <worker-id>
@@ -82,7 +85,11 @@ HTTP operations:
 
 ## Rules
 
-1. Launch MUST create a unique branch and isolated Git workspace beneath the
+1. Launch MUST require a current ready provider receipt for the exact selected
+   `mcpServer` plus non-empty `SNOWCAT_MCP_URL` and
+   `SNOWCAT_MCP_TOKEN` in the node environment before creating a branch or
+   workspace. Their values MUST remain outside argv, files, logs, durable
+   state, and API responses. Launch MUST create a unique branch and isolated Git workspace beneath the
    configured Cockpit state directory. `host` MUST use a linked worktree and
    MUST NOT clone, fetch, or pull. `oci` MUST use the self-contained local
    clone defined by the [rootless OCI contract](oci-workers.md), without a
@@ -92,8 +99,8 @@ HTTP operations:
    paths from the worker's Git commands through process-local Git configuration.
    It MUST also copy the exact running Cockpit executable to the private
    `.agents/bin/snowcat-cockpit` path used by the role prompt, so host and OCI
-   workers invoke the node's matching target protocol without relying on
-   `PATH` or an independently versioned image copy.
+   workers invoke the node's matching target and lease-relay protocols without
+   relying on `PATH` or an independently versioned image copy.
 3. The role prompt MUST identify the stable worker ID, select only the role's
    exact bounded kinds, claim at most one item, and tell the provider to stop
    after reporting the result. A discoverer MUST remain read-only, select only
@@ -109,11 +116,19 @@ HTTP operations:
    worker MUST keep the preallocated current branch. When `write`, `open-pr`, and
    `requiredArtifact: pull-request` are all present, Cockpit's prompt MUST
    state that the operator has authorized committing and the item's required
-   delivery without a second permission prompt. Every role prompt MUST request a 3600-second
-   claim lease, renew it immediately after claim, and renew it before and after
-   installs, builds, tests, and network steps. A worker that learns its lease
-   is no longer active MUST stop before any further repository or GitHub
-   mutation. Immediately after claiming `pr-cure`, `pr-cure-change`,
+   delivery without a second permission prompt. Every managed provider MUST
+   receive Snowcat tools only through the projected worker-local MCP relay for
+   that invocation. The relay MUST replace the configured direct Snowcat
+   server, bind `claim_work` and `heartbeat_work` to 120 seconds, and renew the
+   one active lease every 30 seconds while the provider retains its stdio
+   process. It MUST stop renewing on EOF. A definitive renewal rejection, or
+   failure to renew before the last Snowcat-reported expiry, MUST emit
+   `SNOWCAT_COCKPIT_LEASE_LOST`, write the credential-free local lifecycle
+   marker, and refuse later provider tool calls. A worker that receives that
+   signal MUST stop before any further repository or GitHub mutation. The
+   relay MUST mark `completeAttempted` before forwarding `complete_work` and
+   `completeAcknowledged` only after a successful Snowcat MCP tool response.
+   Immediately after claiming `pr-cure`, `pr-cure-change`,
    `pr-review`, or `pr-review-fix`, the worker MUST call `worker target` with
    the claimed item's exact non-secret ID, kind, pull-request URL, and bound
    head before inspecting or changing the tree. `pr-cure-change` resolves the
@@ -132,8 +147,12 @@ HTTP operations:
    responses.
 6. A launch record MUST contain no provider credential, MCP credential, lease
    token, terminal content, provider output, environment dump, or complete
-   Snowcat queue record. It MAY persist only the non-secret existing-PR target
-   projection listed above after the helper has verified the workspace.
+   Snowcat queue record. Durable node state MAY persist only the non-secret
+   existing-PR target projection listed above after the helper has verified the
+   workspace. The private workspace MAY contain the lifecycle marker's version,
+   worker ID, item ID, coarse status, `completeAttempted`,
+   `completeAcknowledged`, and update time. The node MUST NOT import that marker
+   into its record or treat it as queue state.
 7. Stop MUST address one exact worker and MUST retain its workspace and record.
 8. Cleanup MUST be explicit, MUST refuse a running or dirty workspace, MUST
    remove only byte-matching Cockpit skill files, and MUST retain a `cleaned`
@@ -143,7 +162,9 @@ HTTP operations:
 9. Failed allocation or launch MUST remain recorded and MUST NOT trigger
    automatic worktree or terminal deletion.
 10. A launch is local process creation, not evidence that Snowcat work was
-    claimed or completed.
+    claimed or completed. The lifecycle marker is evidence about relay-local
+    transmission and acknowledgement only; Snowcat remains authoritative for
+    attempt outcome.
 11. Work observation MUST be explicit, MUST follow the
     [queue observation contract](queue-observation-and-fleets.md), and MUST NOT
     modify the worker record. Process state and Snowcat attempt state are
@@ -176,6 +197,7 @@ HTTP operations:
 | Workspace branch | `cockpit/<worker-id>` |
 | Existing-PR target marker | Private `.agents/cockpit-target.json`, verified and imported into the durable worker record |
 | Existing-PR push lease | Last GitHub head observed by `worker target` or a successful `worker push-target` |
+| Worker lifecycle marker | Private `.agents/cockpit-lifecycle.json`, written by the worker-local relay and never imported into node state |
 | tmux socket | Private short runtime directory plus node and worker IDs |
 | Dashboard worker inventory | `GET /api/v1/workers` |
 | Live Snowcat work state | Explicit `worker observe` or dashboard action; never persisted |
@@ -185,7 +207,8 @@ HTTP operations:
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
   [ADR-0003](../adr/0003-isolate-each-managed-worker-terminal.md),
   [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md),
-  [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md)
+  [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md),
+  [ADR-0010](../adr/0010-bind-managed-leases-to-worker-liveness.md)
 - Context: [Cockpit node](../design/node.md)
 - Built in: [Production roadmap, Phase 3](../plans/0002-production-roadmap.md#phase-3--launch-one-managed-worker)
 - Unattended boundary: [rootless OCI workers](oci-workers.md)

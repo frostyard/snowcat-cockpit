@@ -88,7 +88,12 @@ The initial roles are:
 
 Cockpit passes a stable non-secret worker identity containing the node and slot
 IDs so its local process can be correlated with Snowcat bookkeeping. The worker
-still calls `claim_work` and owns the returned lease token.
+still calls `claim_work` and owns the returned lease token. Its worker-local MCP
+relay forces a 120-second lease, renews every 30 seconds while its stdio process
+is alive, and fails closed with `SNOWCAT_COCKPIT_LEASE_LOST`. A private
+credential-free marker distinguishes `complete_work` attempted from Snowcat
+acknowledged; it is execution evidence, not queue authority. See
+[ADR-0010](../adr/0010-bind-managed-leases-to-worker-liveness.md).
 
 ## Execution adapters
 

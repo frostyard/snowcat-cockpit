@@ -89,6 +89,9 @@ func TestOSManagerCreatesRetainsAndCleansRealWorktreeAndTmux(t *testing.T) {
 		StateDirectory: filepath.Join(root, "state"),
 		NodeID:         "node-real-lifecycle-test",
 		Runner:         loggingRunner{t: t},
+		Environment: func() []string {
+			return []string{"PATH=" + os.Getenv("PATH"), "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
 		LookPath: func(name string) (string, error) {
 			switch name {
 			case "git":
@@ -266,6 +269,8 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 			return []string{
 				"PATH=/tools",
 				"SECRET_SENTINEL=never-persist",
+				"SNOWCAT_MCP_URL=https://snowcat.example/mcp",
+				"SNOWCAT_MCP_TOKEN=worker-secret",
 				"SNOWCAT_COCKPIT_MCP_URL=https://snowcat.example/mcp",
 				"SNOWCAT_COCKPIT_MCP_TOKEN=observer-secret",
 			}
@@ -367,6 +372,9 @@ func TestManagerPersistsPreparedPullRequestTarget(t *testing.T) {
 		StateDirectory: filepath.Join(root, "state"), NodeID: "node-target-test", Runner: runner,
 		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
 		Now:      nowUTC(now), Random: bytes.NewReader([]byte("target!!")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -437,7 +445,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
 		Random:   bytes.NewReader([]byte("87654321")),
 		Environment: func() []string {
-			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=must-be-filtered"}
+			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=must-be-filtered"}
 		},
 		OCI: OCIConfig{Images: map[string]string{"codex": image}, CodexHome: codexHome, GHConfigDir: ghConfig},
 	})
@@ -472,7 +480,7 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		"--userns=keep-id:uid=1000,gid=1000", "--cap-drop=ALL",
 		"--security-opt=no-new-privileges", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none", "--env",
 		"--tmpfs=/tmp:rw,exec,size=2g,mode=1777",
-		"SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, OCIModelReview, record.Workspace, codexHome, ghConfig,
+		"SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "GH_TOKEN", image, OCIModelReview, record.ID, record.Workspace, codexHome, ghConfig,
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Podman launch is missing %q: %s", required, argv)
@@ -560,7 +568,7 @@ func TestCopilotOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
 		Random:   bytes.NewReader([]byte("copilot!")),
 		Environment: func() []string {
-			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "GH_TOKEN=github-never-in-argv"}
+			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "GH_TOKEN=github-never-in-argv"}
 		},
 		OCI: OCIConfig{
 			Images: map[string]string{"copilot": image}, CopilotHome: copilotHome, GHConfigDir: ghConfig,
@@ -582,7 +590,7 @@ func TestCopilotOCIWorkerUsesOnlyItsProviderProjection(t *testing.T) {
 	argv := strings.Join(launch.Arguments, "\n")
 	for _, required := range []string{
 		image, OCIModelAuto, copilotHome,
-		"/run/cockpit/input/copilot/mcp-config.json", "SNOWCAT_MCP_TOKEN", "GH_TOKEN",
+		"/run/cockpit/input/copilot/mcp-config.json", "SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "GH_TOKEN", record.ID,
 		"--tmpfs=/home/cockpit/.cache/copilot:rw,exec,size=512m,mode=1777",
 	} {
 		if !strings.Contains(argv, required) {
@@ -632,7 +640,7 @@ func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
 		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
 		Random:   bytes.NewReader([]byte("docker!!")),
 		Environment: func() []string {
-			return []string{"PATH=/tools", "HOME=/home/test", "SNOWCAT_MCP_TOKEN=never-in-argv", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=filtered"}
+			return []string{"PATH=/tools", "HOME=/home/test", "SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=filtered"}
 		},
 		OCI: OCIConfig{
 			DockerImages: map[string]string{"codex": image}, DockerAddHost: "snowcat.goat-snake.ts.net:100.108.168.44", CodexHome: codexHome, GHConfigDir: ghConfig,
@@ -656,7 +664,7 @@ func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
 		"/tools/docker", "--pull=never", "--read-only", "--user=1000:1000",
 		"--cap-drop=ALL", "--security-opt=no-new-privileges=true", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none",
 		"--tmpfs=/tmp:rw,exec,size=2g,mode=1777",
-		"--add-host", "snowcat.goat-snake.ts.net:100.108.168.44", "readonly", "SNOWCAT_MCP_TOKEN", "GH_TOKEN", image, record.Workspace,
+		"--add-host", "snowcat.goat-snake.ts.net:100.108.168.44", "readonly", "SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "GH_TOKEN", image, record.ID, record.Workspace,
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Docker launch is missing %q: %s", required, argv)
@@ -869,9 +877,11 @@ func TestOCIReadinessFailsBeforeAllocatingAWorkspace(t *testing.T) {
 	manager, err := New(Config{
 		StateDirectory: filepath.Join(root, "state"), NodeID: "node-oci-not-ready",
 		Runner: runner, Ready: func(string) error { return nil },
-		LookPath:    func(name string) (string, error) { return "/tools/" + name, nil },
-		Environment: func() []string { return []string{"PATH=/tools"} },
-		OCI:         OCIConfig{Images: map[string]string{"codex": "not-pinned"}},
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
+		OCI: OCIConfig{Images: map[string]string{"codex": "not-pinned"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -899,8 +909,10 @@ func TestInvalidDockerHostMappingFailsBeforeAllocatingAWorkspace(t *testing.T) {
 	manager, err := New(Config{
 		StateDirectory: filepath.Join(root, "state"), NodeID: "node-docker-host-not-ready",
 		Runner: runner, Ready: func(string) error { return nil },
-		LookPath:    func(name string) (string, error) { return "/tools/" + name, nil },
-		Environment: func() []string { return []string{"PATH=/tools"} },
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
 		OCI: OCIConfig{
 			DockerImages:  map[string]string{"codex": "sha256:" + strings.Repeat("8", 64)},
 			DockerAddHost: "snowcat.goat-snake.ts.net:not-an-ip",
@@ -932,7 +944,9 @@ func TestStopRetainsWorkspaceAndAttachUsesExactSocket(t *testing.T) {
 	manager, err := New(Config{
 		StateDirectory: filepath.Join(root, "state"), NodeID: "node-test",
 		Runner: runner, LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
-		Random: bytes.NewReader([]byte("abcdefgh")), Environment: func() []string { return []string{"PATH=/tools"} },
+		Random: bytes.NewReader([]byte("abcdefgh")), Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1005,19 +1019,56 @@ func TestBuildPromptPinsRoleSelections(t *testing.T) {
 	t.Parallel()
 
 	discoverer := BuildPrompt("worker-1234567890abcdef", "discoverer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "only kinds ending in -discovery", "read-only discovery", "requiredArtifact", "open-pr", "leaseSeconds 3600", "Immediately after a claim", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "only kinds ending in -discovery", "read-only discovery", "requiredArtifact", "open-pr", "bounds claims to 120 seconds", "renews the active lease every 30 seconds", "at most one"} {
 		if !strings.Contains(discoverer, expected) {
 			t.Fatalf("discoverer prompt missing %q: %s", expected, discoverer)
 		}
 	}
 	implementer := BuildPrompt("worker-1234567890abcdef", "implementer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery and exact pr-review and release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix, pr-cure, pr-cure-change", "worker target", "cure.pullRequestUrl", "review.pullRequestUrl", "refuses a moved head", "push-target", "never use ordinary git push", "do not create, rename, or switch branches", "write and open-pr in allowedActions", "requiredArtifact pull-request", "Never infer write authority from open-pr", "without a second permission prompt", "leaseSeconds 3600", "before and after every install, build, test, or network step", "lease is no longer active", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery and exact pr-review and release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix, pr-cure, pr-cure-change", "worker target", "cure.pullRequestUrl", "review.pullRequestUrl", "refuses a moved head", "push-target", "never use ordinary git push", "do not create, rename, or switch branches", "write and open-pr in allowedActions", "requiredArtifact pull-request", "Never infer write authority from open-pr", "without a second permission prompt", "do not request a front-loaded lease", "SNOWCAT_COCKPIT_LEASE_LOST", "whether complete_work was attempted", "at most one"} {
 		if !strings.Contains(implementer, expected) {
 			t.Fatalf("implementer prompt missing %q: %s", expected, implementer)
 		}
 	}
 	reviewer := BuildPrompt("worker-1234567890abcdef", "reviewer", "frostyard/firn")
-	if !strings.Contains(reviewer, "review-snowcat-queue") || !strings.Contains(reviewer, "only pr-review") || !strings.Contains(reviewer, "leaseSeconds 3600") || !strings.Contains(reviewer, "worker target") || !strings.Contains(reviewer, "exact bound head detached") || !strings.Contains(reviewer, "release the item") {
+	if !strings.Contains(reviewer, "review-snowcat-queue") || !strings.Contains(reviewer, "only pr-review") || !strings.Contains(reviewer, "bounds claims to 120 seconds") || !strings.Contains(reviewer, "worker target") || !strings.Contains(reviewer, "exact bound head detached") || !strings.Contains(reviewer, "release the item") {
 		t.Fatalf("reviewer prompt = %s", reviewer)
+	}
+}
+
+func TestHostProviderCommandsReplaceDirectSnowcatWithWorkerLocalRelay(t *testing.T) {
+	t.Parallel()
+
+	helper := "/workspace/.agents/bin/snowcat-cockpit"
+	workspace := "/workspace"
+	for _, provider := range []string{"codex", "claude", "copilot"} {
+		directServer := "snowcat"
+		if provider == "copilot" {
+			directServer = "snowcat-mcp"
+		}
+		command := hostProviderCommand(provider, directServer, "/tools/"+provider, "bounded prompt", helper, "worker-1234567890abcdef", workspace)
+		joined := strings.Join(command, "\n")
+		for _, expected := range []string{"snowcat-cockpit", "lease-proxy", "worker-1234567890abcdef", workspace} {
+			if !strings.Contains(joined, expected) {
+				t.Errorf("%s command missing %q: %#v", provider, expected, command)
+			}
+		}
+		if strings.Contains(joined, "SNOWCAT_MCP_TOKEN") || strings.Contains(joined, "https://snowcat") {
+			t.Errorf("%s command contains upstream credential configuration: %#v", provider, command)
+		}
+		switch provider {
+		case "codex":
+			if !strings.Contains(joined, "mcp_servers.snowcat.enabled=false") {
+				t.Errorf("Codex command did not disable direct Snowcat: %#v", command)
+			}
+		case "claude":
+			if !slices.Contains(command, "--strict-mcp-config") || !strings.Contains(joined, `"type":"stdio"`) {
+				t.Errorf("Claude command is not relay-only: %#v", command)
+			}
+		case "copilot":
+			if !slices.Contains(command, "--disable-mcp-server") || !strings.Contains(joined, `"type":"local"`) {
+				t.Errorf("Copilot command is not relay-only: %#v", command)
+			}
+		}
 	}
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/frostyard/snowcat-cockpit/internal/campaign"
 	"github.com/frostyard/snowcat-cockpit/internal/doctor"
+	"github.com/frostyard/snowcat-cockpit/internal/leaseproxy"
 	"github.com/frostyard/snowcat-cockpit/internal/managedrepo"
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
@@ -123,12 +124,14 @@ func runWorkers(args []string, stdout, stderr io.Writer) int {
 
 func runWorker(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "worker requires launch, target, push-target, observe, attach, stop, or cleanup")
+		fmt.Fprintln(stderr, "worker requires launch, lease-proxy, target, push-target, observe, attach, stop, or cleanup")
 		return 2
 	}
 	switch args[0] {
 	case "launch":
 		return runWorkerLaunch(args[1:], stdout, stderr)
+	case "lease-proxy":
+		return runWorkerLeaseProxy(args[1:], stdout, stderr)
 	case "target":
 		return runWorkerTarget(args[1:], stdout, stderr)
 	case "push-target":
@@ -141,6 +144,33 @@ func runWorker(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unknown worker action %q\n", args[0])
 		return 2
 	}
+}
+
+func runWorkerLeaseProxy(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("worker lease-proxy", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workerID := flags.String("worker", "", "managed worker ID")
+	workspace := flags.String("workspace", "", "managed worker workspace")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "worker lease-proxy accepts no positional arguments")
+		return 2
+	}
+	relay, err := leaseproxy.New(leaseproxy.Config{
+		Endpoint: os.Getenv("SNOWCAT_MCP_URL"), Token: os.Getenv("SNOWCAT_MCP_TOKEN"),
+		WorkerID: *workerID, Workspace: *workspace, Input: os.Stdin, Output: stdout, Errors: stderr,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "configure worker lease relay: %v\n", err)
+		return 1
+	}
+	if err := relay.Run(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "run worker lease relay: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runWorkerTarget(args []string, stdout, stderr io.Writer) int {
@@ -284,6 +314,7 @@ func runWorkerLaunch(args []string, stdout, stderr io.Writer) int {
 	adapter := flags.String("adapter", worker.AdapterHost, "execution adapter: host or oci")
 	runtimeName := flags.String("runtime", "", "OCI runtime: podman or docker (defaults to podman)")
 	providerID := flags.String("provider", "", "provider to launch: codex, claude, or copilot")
+	mcpServer := flags.String("mcp-server", "", "configured direct Snowcat MCP server name (provider default when omitted)")
 	role := flags.String("role", "", "worker role: discoverer, implementer, or reviewer")
 	repository := flags.String("repository", "", "Snowcat repository filter as owner/name")
 	source := flags.String("source", "", "existing local Git working tree")
@@ -304,7 +335,7 @@ func runWorkerLaunch(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	record, err := manager.Launch(context.Background(), worker.LaunchRequest{
-		Adapter: *adapter, Runtime: *runtimeName, Provider: *providerID, Role: *role, Repository: *repository, Source: *source, BaseRef: *baseRef,
+		Adapter: *adapter, Runtime: *runtimeName, Provider: *providerID, MCPServer: *mcpServer, Role: *role, Repository: *repository, Source: *source, BaseRef: *baseRef,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "launch managed worker: %v\n", err)
@@ -823,7 +854,7 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 			CopilotHome:   defaultCopilotHome(),
 			GHConfigDir:   defaultGHConfigDir(),
 		},
-		Ready: func(providerID string) error {
+		ReadyMCP: func(providerID, mcpServer string) error {
 			snapshot, err := loadProfileSnapshot(skillsDirectory, stateDirectory)
 			if err != nil {
 				return err
@@ -834,6 +865,14 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 				}
 				if candidate.Status != profile.StatusReady {
 					return fmt.Errorf("%s profile is %s", providerID, candidate.Status)
+				}
+				receipts, err := state.ReadPreflights(stateDirectory)
+				if err != nil {
+					return err
+				}
+				receipt, ok := receipts[providerID]
+				if !ok || receipt.MCPServer != mcpServer {
+					return fmt.Errorf("%s profile was not proved with MCP server %s", providerID, mcpServer)
 				}
 				return nil
 			}
@@ -944,7 +983,8 @@ func printUsage(output io.Writer) {
   snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
   snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]
   snowcat-cockpit workers [--json] [--state-dir <directory>]
-  snowcat-cockpit worker launch [--adapter host|oci] [--runtime podman|docker] --provider <name> --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+  snowcat-cockpit worker launch [--adapter host|oci] [--runtime podman|docker] --provider <name> [--mcp-server <name>] --role <name> --repository <owner/name> --source <directory> [--base-ref <ref>]
+  snowcat-cockpit worker lease-proxy --worker <id> --workspace <directory>
   snowcat-cockpit worker target --worker <id> --repository <owner/name> --item <uuid> --kind <kind> --pull-request <url> --head <sha> [--json]
   snowcat-cockpit worker push-target --worker <id> [--json]
   snowcat-cockpit worker observe|attach|stop|cleanup [options] <worker-id>

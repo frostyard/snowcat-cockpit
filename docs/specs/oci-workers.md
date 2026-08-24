@@ -37,7 +37,7 @@ The node reads OCI configuration only from its starting environment:
 | `COPILOT_HOME` | no | Host Copilot configuration root; defaults to `$HOME/.copilot` |
 | `GH_CONFIG_DIR` | no | Host GitHub CLI configuration root; defaults to `${XDG_CONFIG_HOME:-$HOME/.config}/gh` |
 | `SNOWCAT_MCP_TOKEN` | yes | Inherited by name; its value MUST NOT enter OCI argv, state, or logs |
-| `SNOWCAT_MCP_URL` | for Claude | Inherited by name; the secure serve wrapper derives it from its fixed MCP URL |
+| `SNOWCAT_MCP_URL` | yes | Inherited by name; the secure serve wrapper derives it from its fixed MCP URL |
 | `GH_TOKEN` | yes | Inherited by name; may be supplied by the operator or projected from the host GitHub CLI keyring by the secure serve wrapper |
 | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | image-owned for Claude | Fixed to `1`; never inherited from the host |
 
@@ -80,8 +80,8 @@ The first-slice command baseline is deliberately small: the base shell and
 Unix utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
 patch, jq, ripgrep, unzip, and `column`. Cockpit projects the exact running
 `snowcat-cockpit` binary into the already-mounted worker workspace for
-worker-local target preparation; it is not an independently versioned image
-tool. A new tool enters this list only after
+worker-local target preparation and lease relay; it is not an independently
+versioned image tool. A new tool enters this list only after
 a repository contract or retained worker terminal demonstrates the need.
 Commands that a provider runs through a login shell MUST still resolve `go` and
 `gofmt` through `/usr/local/bin`; `GOPATH` and `GOCACHE` MUST live beneath the
@@ -92,8 +92,8 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
 1. OCI readiness MUST be checked before allocating a branch or worktree: the
    selected runtime exists, serves Linux containers, the runtime-specific
    pinned image exists locally, Podman reports `rootless: true`,
-   `SNOWCAT_MCP_TOKEN` and `GH_TOKEN` are present, Claude additionally has
-   `SNOWCAT_MCP_URL`, and every required input file passes the checks below.
+   `SNOWCAT_MCP_TOKEN`, `SNOWCAT_MCP_URL`, and `GH_TOKEN` are present, and every
+   required input file passes the checks below.
 2. All providers require exact `hosts.yml` and `config.yml` beneath
    `GH_CONFIG_DIR`. Codex additionally requires exact `auth.json` and
    `config.toml` beneath `CODEX_HOME`; Copilot requires only exact
@@ -124,22 +124,27 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    non-executable. The tmpfs roots MAY be mode `1777` for rootless-runtime
    portability; the non-root entrypoint MUST create the actual provider and
    GitHub configuration directories as mode `0700` beneath it.
-5. The runtime receives `--env SNOWCAT_MCP_TOKEN` and `--env GH_TOKEN` with no
-   values. Claude additionally receives `--env SNOWCAT_MCP_URL`; its image-owned
-   strict MCP configuration expands the URL and bearer token without either
-   value entering argv. No other inherited credential environment name enters
-   the first-slice container.
+5. The runtime receives `--env SNOWCAT_MCP_TOKEN`, `--env SNOWCAT_MCP_URL`, and
+   `--env GH_TOKEN` with no values. The worker-local relay reads the first two
+   values from its inherited environment and forwards MCP to Snowcat without
+   either value entering argv, a file, the lifecycle marker, or node state. No
+   other inherited credential environment name enters the first-slice
+   container.
 6. The image entrypoint MUST copy only the provider's declared input files into the
    tmpfs home, run `gh auth setup-git`, mark `/workspace` safe in the ephemeral
    Git config, restore a conventional `022` process umask after writing
    credentials at mode `0600`, and invoke
-   its provider once with Cockpit's bounded role prompt. Codex uses
+   its provider once with Cockpit's bounded role prompt, stable worker ID, and
+   validated provider-local direct Snowcat server name.
+   Every provider disables its configured direct Snowcat server for the
+   invocation and registers only the projected Cockpit binary's stdio lease
+   relay. Codex uses
    `codex exec --dangerously-bypass-approvals-and-sandbox` and its role-pinned
    model. Copilot uses non-interactive `--prompt`, `--allow-all`, disabled
    remote control, built-in MCP servers, logs and updates, plus model selector
    `auto`. Claude uses print mode, no session persistence, bypass permissions,
    no browser integration, its role-pinned model alias, only user setting
-   sources, and only the image-owned strict Snowcat MCP configuration. Its
+   sources, and only the generated credential-free strict relay configuration. Its
    entrypoint copies the three byte-locked Cockpit Snowcat skills into the
    ephemeral user skill root and supplies an image-owned instruction to read
    repository `AGENTS.md` and `CLAUDE.md`; repository Claude settings, hooks,
@@ -175,16 +180,18 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
 | Container name | `cockpit-<worker-id>` |
 | Worker target helper | Exact running Cockpit binary projected under the private `.agents` workspace tree |
 | Codex OCI image | [`oci/Containerfile`](../../oci/Containerfile) and [`oci/entrypoint.sh`](../../oci/entrypoint.sh) |
-| Claude OCI image | [`oci/Claude.Containerfile`](../../oci/Claude.Containerfile), [`oci/claude-entrypoint.sh`](../../oci/claude-entrypoint.sh), [`oci/claude-mcp.json`](../../oci/claude-mcp.json), and [`oci/claude-system-prompt.txt`](../../oci/claude-system-prompt.txt) |
+| Claude OCI image | [`oci/Claude.Containerfile`](../../oci/Claude.Containerfile), [`oci/claude-entrypoint.sh`](../../oci/claude-entrypoint.sh), and [`oci/claude-system-prompt.txt`](../../oci/claude-system-prompt.txt) |
 | Copilot OCI image | [`oci/Copilot.Containerfile`](../../oci/Copilot.Containerfile) and [`oci/copilot-entrypoint.sh`](../../oci/copilot-entrypoint.sh) |
 | Worker record adapter | Exact normalized request adapter |
 | Runtime credential projection | Fixed provider/GitHub paths and the exact environment-variable names above |
+| Worker lifecycle relay | Exact projected Cockpit binary, configured as one provider-local stdio MCP server |
 | Published worker images | `.github/workflows/worker-images.yml` from the three checked-in Containerfiles |
 
 ## References
 
 - Rationale: [ADR-0005](../adr/0005-isolate-unattended-workers-in-rootless-oci.md)
 - Lifecycle hardening: [ADR-0009](../adr/0009-observe-reclaimable-snowcat-work.md)
+- Lease liveness: [ADR-0010](../adr/0010-bind-managed-leases-to-worker-liveness.md)
 - Workspace rationale: [ADR-0006](../adr/0006-use-self-contained-git-directories-for-oci-workers.md)
 - Context: [Cockpit node](../design/node.md)
 - Base lifecycle: [managed workers](managed-workers.md)

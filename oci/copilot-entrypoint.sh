@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  printf 'cockpit-entrypoint: expected one bounded worker prompt and one model selector\n' >&2
+if [[ $# -ne 4 ]]; then
+  printf 'cockpit-entrypoint: expected one bounded worker prompt, one model selector, one worker identity, and one MCP server name\n' >&2
   exit 64
 fi
 
@@ -21,6 +21,8 @@ git config --global --add safe.directory /workspace
 # non-secret files to use the conventional process default.
 umask 022
 
+relay_config="{\"mcpServers\":{\"snowcat-cockpit\":{\"type\":\"local\",\"command\":\"/workspace/.agents/bin/snowcat-cockpit\",\"args\":[\"worker\",\"lease-proxy\",\"--worker\",\"$3\",\"--workspace\",\"/workspace\"]}}}"
+
 exec copilot \
   --prompt "$1" \
   --model "$2" \
@@ -31,6 +33,8 @@ exec copilot \
   --no-remote-export \
   --no-auto-update \
   --disable-builtin-mcps \
+  --disable-mcp-server "$4" \
+  --additional-mcp-config "$relay_config" \
   --output-format text \
   --no-color \
   --log-level none
