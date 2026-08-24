@@ -15,6 +15,27 @@ RUN case "$TARGETARCH" in \
     && printf '%s  %s\n' "$checksum" /usr/local/bin/claude | sha256sum --check --strict \
     && chmod 0755 /usr/local/bin/claude
 
+FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS golangci
+
+ARG TARGETARCH=amd64
+# The fleet's pinned lint release (std, clix, updex all require 2.12.2; updex's
+# gate refuses any other version). Pinned URL plus per-architecture SHA256 per
+# core ADR-0023. Retired once repositories declare tools in mise.lock.
+ARG GOLANGCI_LINT_VERSION=2.12.2
+RUN case "$TARGETARCH" in \
+      amd64) checksum=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553 ;; \
+      arm64) checksum=44cd40a8c76c86755375adfeea52cfd3533cb43d7bd647771e0ae065e166df3a ;; \
+      *) printf 'unsupported TARGETARCH: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl --fail --location --show-error \
+      --output /tmp/golangci-lint.tar.gz \
+      "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-${TARGETARCH}.tar.gz" \
+    && printf '%s  %s\n' "$checksum" /tmp/golangci-lint.tar.gz | sha256sum --check --strict \
+    && tar --extract --gzip --file /tmp/golangci-lint.tar.gz --directory /tmp \
+      "golangci-lint-${GOLANGCI_LINT_VERSION}-linux-${TARGETARCH}/golangci-lint" \
+    && install -m 0755 "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-${TARGETARCH}/golangci-lint" /usr/local/bin/golangci-lint \
+    && /usr/local/bin/golangci-lint version --short | grep -qx "$GOLANGCI_LINT_VERSION"
+
 FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36
 
 RUN apt-get update \
@@ -39,6 +60,7 @@ RUN apt-get update \
     && ln -s /usr/local/go/bin/go /usr/local/bin/go \
     && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
+COPY --from=golangci /usr/local/bin/golangci-lint /usr/local/bin/golangci-lint
 COPY --from=claude /usr/local/bin/claude /usr/local/bin/claude
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
@@ -52,7 +74,8 @@ ENV HOME=/home/cockpit \
     CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 \
     GH_CONFIG_DIR=/home/cockpit/.config/gh \
     GOPATH=/home/cockpit/go \
-    GOCACHE=/home/cockpit/.cache/go-build
+    GOCACHE=/home/cockpit/.cache/go-build \
+    GOTOOLCHAIN=local
 
 USER 1000:1000
 WORKDIR /workspace

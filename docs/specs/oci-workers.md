@@ -78,7 +78,12 @@ credential from Cockpit configuration.
 
 The first-slice command baseline is deliberately small: the base shell and
 Unix utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
-patch, jq, ripgrep, unzip, and `column`. Cockpit projects the exact running
+patch, jq, ripgrep, unzip, `column`, and `golangci-lint` at the fleet's
+pinned release (2.12.2 — the version `std`, `clix`, and `updex` gates
+require; an earlier campaign lost four workers to in-lease lint downloads
+crossing the PID ceiling). Every image sets `GOTOOLCHAIN=local`: a
+repository whose `go.mod` the image's Go cannot satisfy fails at the first
+`go` invocation instead of downloading a toolchain inside the lease. Cockpit projects the exact running
 `snowcat-cockpit` binary into the already-mounted worker workspace for
 worker-local target preparation and lease relay; it is not an independently
 versioned image tool. A new tool enters this list only after
