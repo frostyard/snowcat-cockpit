@@ -132,8 +132,10 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    It MUST NOT pass a runtime socket, privileged mode, added capability, or
    host networking.
 4. The only host filesystem mounts are the exact worker workspace read-write at
-   `/workspace` and the provider's exact input files read-only below
-   `/run/cockpit/input`. The container home and `/tmp` MUST be bounded 2 GiB
+   `/workspace`, the provider's exact input files read-only below
+   `/run/cockpit/input`, and — for a repository that declares tools (rule 6) —
+   the node's provisioned tool cache read-only at
+   `/var/lib/snowcat-cockpit/mise`. The container home and `/tmp` MUST be bounded 2 GiB
    tmpfs mounts, and test scratch at `/var/lib` MUST be a bounded 512 MiB tmpfs
    mount. `/tmp` MUST be executable because repository test contracts create
    bounded command fixtures there. Copilot's native package cache MUST be a
@@ -147,7 +149,25 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    either value entering argv, a file, the lifecycle marker, or node state. No
    other inherited credential environment name enters the first-slice
    container.
-6. The image entrypoint MUST copy only the provider's declared input files into the
+6. **Repository tools are provisioned before the lease, never inside it**
+   ([ADR-0012](../adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
+   §2–3). When the allocated workspace carries `mise.toml`, Cockpit MUST,
+   before starting the provider, run `mise install --locked` in a throwaway
+   container of the same pinned image under rule 3's posture with the
+   workspace mounted read-only, a per-repository cache keyed by the digest
+   of `mise.toml`, `mise.lock`, and `go.mod` mounted read-write at
+   `/var/lib/snowcat-cockpit/mise`, no provider input, and no credential
+   environment name; mise works from a tmpfs copy of those three files so
+   the workspace is never written. `mise.toml` without `mise.lock`, a tool
+   the lock does not pre-resolve, a checksum mismatch, or a tool still
+   missing after install MUST fail the launch with the tool or reason named
+   in the worker record — no provider starts, and the cache for that digest
+   is removed. A completed cache is reused for every later worker with the
+   same digest without a second run. The worker record MUST carry the
+   digest, cache path, and installed `tool@version` list as non-secret
+   metadata. A workspace without `mise.toml` provisions nothing and mounts
+   nothing.
+7. The image entrypoint MUST copy only the provider's declared input files into the
    tmpfs home, run `gh auth setup-git`, mark `/workspace` safe in the ephemeral
    Git config, restore a conventional `022` process umask after writing
    credentials at mode `0600`, and invoke
@@ -172,16 +192,16 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
    modes are permitted only inside the complete OCI boundary above. Claude
    background-task functionality MUST be disabled so print-mode exit cannot
    abandon tests or subagents that still own delivery work.
-7. The foreground selected-runtime process runs in the worker's dedicated tmux pane with
+8. The foreground selected-runtime process runs in the worker's dedicated tmux pane with
    `remain-on-exit`. Cockpit MUST NOT call `podman logs` or persist provider
    output. A normal one-shot exit reconciles to the existing `exited` process
    state.
-8. Explicit stop MUST address the exact derived container name before stopping
+9. Explicit stop MUST address the exact derived container name before stopping
    tmux. Workspace cleanup remains explicit and retains the Git branch.
-9. A failed readiness or container launch MUST return a bounded explanation
+10. A failed readiness or container launch MUST return a bounded explanation
    without provider output, configuration content, environment values, or
    runtime error bodies.
-10. The OCI workspace MUST be a self-contained local clone whose `.git`
+11. The OCI workspace MUST be a self-contained local clone whose `.git`
     directory is inside `/workspace`. Allocation MUST use copied objects, not
     hardlinks or alternates, and MUST perform no network operation. The source
     push URL MUST identify the request's exact repository on `github.com` via
@@ -189,7 +209,7 @@ bounded 2 GiB writable home tmpfs rather than the read-only image filesystem.
     MUST be the canonical credential-free HTTPS URL. Local paths, mismatched
     repositories, unsupported hosts or schemes, HTTP user information, and URL
     passwords MUST fail before clone allocation.
-11. Cockpit-owned skill exclusions MUST live in the clone's private
+12. Cockpit-owned skill exclusions MUST live in the clone's private
     `.git/info/exclude`. Explicit cleanup MUST first import the exact worker
     branch into the source repository; failure MUST retain the OCI workspace.
 

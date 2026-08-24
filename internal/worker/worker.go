@@ -77,36 +77,37 @@ type LaunchRequest struct {
 }
 
 type Record struct {
-	Version        int        `json:"version"`
-	ID             string     `json:"id"`
-	NodeID         string     `json:"nodeId"`
-	Adapter        string     `json:"adapter"`
-	Runtime        string     `json:"runtime,omitempty"`
-	RuntimePosture string     `json:"runtimePosture,omitempty"`
-	Provider       string     `json:"provider"`
-	MCPServer      string     `json:"mcpServer,omitempty"`
-	Model          string     `json:"model,omitempty"`
-	Role           string     `json:"role"`
-	Repository     string     `json:"repository"`
-	Source         string     `json:"source"`
-	Workspace      string     `json:"workspace"`
-	BaseRef        string     `json:"baseRef"`
-	BaseCommit     string     `json:"baseCommit"`
-	Branch         string     `json:"branch"`
-	ItemID         string     `json:"itemId,omitempty"`
-	WorkKind       string     `json:"workKind,omitempty"`
-	PullRequestURL string     `json:"pullRequestUrl,omitempty"`
-	TargetRepo     string     `json:"targetRepository,omitempty"`
-	TargetBranch   string     `json:"targetBranch,omitempty"`
-	TargetHead     string     `json:"targetHead,omitempty"`
-	TargetMode     string     `json:"targetMode,omitempty"`
-	TargetedAt     *time.Time `json:"targetedAt,omitempty"`
-	Status         string     `json:"status"`
-	Detail         string     `json:"detail"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	StartedAt      *time.Time `json:"startedAt,omitempty"`
-	StoppedAt      *time.Time `json:"stoppedAt,omitempty"`
-	CleanedAt      *time.Time `json:"cleanedAt,omitempty"`
+	Version        int           `json:"version"`
+	ID             string        `json:"id"`
+	NodeID         string        `json:"nodeId"`
+	Adapter        string        `json:"adapter"`
+	Runtime        string        `json:"runtime,omitempty"`
+	RuntimePosture string        `json:"runtimePosture,omitempty"`
+	Provider       string        `json:"provider"`
+	MCPServer      string        `json:"mcpServer,omitempty"`
+	Model          string        `json:"model,omitempty"`
+	Role           string        `json:"role"`
+	Repository     string        `json:"repository"`
+	Source         string        `json:"source"`
+	Workspace      string        `json:"workspace"`
+	BaseRef        string        `json:"baseRef"`
+	BaseCommit     string        `json:"baseCommit"`
+	Branch         string        `json:"branch"`
+	ItemID         string        `json:"itemId,omitempty"`
+	WorkKind       string        `json:"workKind,omitempty"`
+	PullRequestURL string        `json:"pullRequestUrl,omitempty"`
+	TargetRepo     string        `json:"targetRepository,omitempty"`
+	TargetBranch   string        `json:"targetBranch,omitempty"`
+	TargetHead     string        `json:"targetHead,omitempty"`
+	TargetMode     string        `json:"targetMode,omitempty"`
+	TargetedAt     *time.Time    `json:"targetedAt,omitempty"`
+	Provisioning   *Provisioning `json:"provisioning,omitempty"`
+	Status         string        `json:"status"`
+	Detail         string        `json:"detail"`
+	CreatedAt      time.Time     `json:"createdAt"`
+	StartedAt      *time.Time    `json:"startedAt,omitempty"`
+	StoppedAt      *time.Time    `json:"stoppedAt,omitempty"`
+	CleanedAt      *time.Time    `json:"cleanedAt,omitempty"`
 }
 
 type BaseInspection struct {
@@ -381,6 +382,13 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 		}
 	}
 	environment := gitEnvironment(manager.environment(), excludePath)
+	if request.Adapter == AdapterOCI {
+		provisioning, err := manager.provisionTools(ctx, record, runtimeSelection, ociHostEnvironment(environment))
+		if err != nil {
+			return manager.fail(record, "repository tool provisioning failed", err)
+		}
+		record.Provisioning = provisioning
+	}
 	prompt := buildPrompt(workerID, request.Role, request.Repository, targetHelperCommand)
 	hostRelayHelper := targetHelperCommand
 	if manager.targetHelper != "" {
@@ -1093,6 +1101,11 @@ func (manager *Manager) ociArguments(record Record, image, prompt string) []stri
 	case "claude":
 		arguments = append(arguments,
 			"--mount", inputMount(filepath.Join(manager.oci.ClaudeHome, ".credentials.json"), "/run/cockpit/input/claude/.credentials.json"),
+		)
+	}
+	if record.Provisioning != nil {
+		arguments = append(arguments,
+			"--mount", "type=bind,source="+record.Provisioning.Cache+",destination="+MiseDataDirectory+",readonly",
 		)
 	}
 	arguments = append(arguments,

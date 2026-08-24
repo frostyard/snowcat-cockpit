@@ -30,6 +30,9 @@ type fakeRunner struct {
 	dockerSecurity string
 	currentBranch  string
 	currentHead    string
+	pinFiles       map[string]string
+	provisionFails bool
+	provisionRuns  int
 }
 
 type loggingRunner struct {
@@ -175,6 +178,11 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 		if err := os.MkdirAll(filepath.Join(runner.workspace, ".git", "info"), 0o700); err != nil {
 			return nil, err
 		}
+		for name, content := range runner.pinFiles {
+			if err := os.WriteFile(filepath.Join(runner.workspace, name), []byte(content), 0o600); err != nil {
+				return nil, err
+			}
+		}
 		if err := os.WriteFile(filepath.Join(runner.workspace, ".git", "info", "exclude"), nil, 0o600); err != nil {
 			return nil, err
 		}
@@ -201,6 +209,12 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 		return []byte("linux\n" + security + "\n"), nil
 	case strings.Contains(arguments, "image\x00exists"):
 		return nil, nil
+	case strings.Contains(arguments, "--entrypoint\x00/bin/sh") && strings.Contains(arguments, "MISE_LOCKED=1"):
+		runner.provisionRuns++
+		if runner.provisionFails {
+			return []byte("mise ERROR Failed to install aqua:jqlang/jq@1.7.1: jq@1.7.1 is not in the lockfile\nmise ERROR Version: 2026.8.12\nmise ERROR Run with --verbose\n"), errors.New("exit status 1")
+		}
+		return []byte("mise go@1.26.7 ✓ installed\n{\"go\":[{\"version\":\"1.26.7\"}],\"golangci-lint\":[{\"version\":\"2.13.1\"}]}\n"), nil
 	case strings.Contains(arguments, "image\x00inspect"):
 		return []byte("[]\n"), nil
 	case strings.Contains(arguments, "stop\x00--ignore"):
@@ -1070,5 +1084,154 @@ func TestHostProviderCommandsReplaceDirectSnowcatWithWorkerLocalRelay(t *testing
 				t.Errorf("Copilot command is not relay-only: %#v", command)
 			}
 		}
+	}
+}
+
+func provisioningTestManager(t *testing.T, runner *fakeRunner) (*Manager, string) {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claudeHome := filepath.Join(root, "claude")
+	ghConfig := filepath.Join(root, "gh")
+	for _, path := range []string{filepath.Join(claudeHome, ".credentials.json"), filepath.Join(ghConfig, "hosts.yml"), filepath.Join(ghConfig, "config.yml")} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner.source = source
+	runner.baseCommit = strings.Repeat("c", 40)
+	runner.remoteURL = "git@github.com:frostyard/std.git"
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-provision-test",
+		Runner: runner, Ready: func(string) error { return nil },
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:   bytes.NewReader([]byte("1234567887654321")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "GH_TOKEN=github-never-in-argv"}
+		},
+		OCI: OCIConfig{Images: map[string]string{"claude": "sha256:" + strings.Repeat("e", 64)}, ClaudeHome: claudeHome, GHConfigDir: ghConfig},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager, source
+}
+
+func TestOCIWorkerProvisionsRepositoryToolsBeforeLaunch(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{pinFiles: map[string]string{"mise.toml": "[tools]\ngolangci-lint = \"2.13.1\"\n", "mise.lock": "lockfile_version = 1\n", "go.mod": "module x\n\ngo 1.26\n\ntoolchain go1.26.7\n"}}
+	manager, source := provisioningTestManager(t, runner)
+	record, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "implementer", Repository: "frostyard/std", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Provisioning == nil || record.Provisioning.LockDigest == "" || !strings.HasPrefix(record.Provisioning.Cache, filepath.Join(manager.stateDirectory, "mise", "frostyard", "std")) {
+		t.Fatalf("provisioning = %#v", record.Provisioning)
+	}
+	if want := []string{"go@1.26.7", "golangci-lint@2.13.1"}; strings.Join(record.Provisioning.Tools, ",") != strings.Join(want, ",") {
+		t.Fatalf("tools = %v, want %v", record.Provisioning.Tools, want)
+	}
+	if _, err := os.Stat(filepath.Join(record.Provisioning.Cache, ".provisioned.json")); err != nil {
+		t.Fatalf("cache marker: %v", err)
+	}
+	var provision, launch Command
+	for _, command := range runner.commands {
+		joined := strings.Join(command.Arguments, "\x00")
+		if strings.Contains(joined, "MISE_LOCKED=1") {
+			provision = command
+		}
+		if strings.Contains(joined, "new-session") {
+			launch = command
+		}
+	}
+	provisionArgs := strings.Join(provision.Arguments, "\n")
+	for _, want := range []string{"--read-only", "--cap-drop=ALL", "--pids-limit=1024", "destination=/workspace,readonly", "destination=" + MiseDataDirectory + "\n", "--entrypoint\n/bin/sh", "mise install --locked"} {
+		if !strings.Contains(provisionArgs+"\n", want) {
+			t.Fatalf("provisioning container lacks %q: %v", want, provision.Arguments)
+		}
+	}
+	for _, forbidden := range []string{"SNOWCAT_MCP_TOKEN", "GH_TOKEN", ".credentials.json"} {
+		if strings.Contains(provisionArgs, forbidden) {
+			t.Fatalf("provisioning container received %q: %v", forbidden, provision.Arguments)
+		}
+	}
+	launchArgs := strings.Join(launch.Arguments, "\n")
+	if !strings.Contains(launchArgs, "source="+record.Provisioning.Cache+",destination="+MiseDataDirectory+",readonly") {
+		t.Fatalf("worker container does not mount the cache read-only: %v", launch.Arguments)
+	}
+	if runner.provisionRuns != 1 {
+		t.Fatalf("provisioning ran %d times", runner.provisionRuns)
+	}
+
+	// The same pin files provision from the cache without a second container run.
+	runner.commands = nil
+	second, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "reviewer", Repository: "frostyard/std", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.provisionRuns != 1 || second.Provisioning == nil || second.Provisioning.Cache != record.Provisioning.Cache {
+		t.Fatalf("cache reuse: runs=%d provisioning=%#v", runner.provisionRuns, second.Provisioning)
+	}
+}
+
+func TestOCIWorkerWithoutPinFilesProvisionsNothing(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{}
+	manager, source := provisioningTestManager(t, runner)
+	record, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "discoverer", Repository: "frostyard/std", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Provisioning != nil || runner.provisionRuns != 0 {
+		t.Fatalf("unexpected provisioning: %#v runs=%d", record.Provisioning, runner.provisionRuns)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(strings.Join(command.Arguments, "\x00"), MiseDataDirectory) {
+			t.Fatalf("worker container mounted a cache it has no reason to: %v", command.Arguments)
+		}
+	}
+}
+
+func TestOCIWorkerFailsWithTheToolNamedWhenTheLockCannotBeSatisfied(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{provisionFails: true, pinFiles: map[string]string{"mise.toml": "[tools]\njq = \"1.7.1\"\n", "mise.lock": "lockfile_version = 1\n"}}
+	manager, source := provisioningTestManager(t, runner)
+	record, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "implementer", Repository: "frostyard/std", Source: source})
+	if err == nil || !errors.Is(err, ErrNotReady) || !strings.Contains(err.Error(), "jq@1.7.1 is not in the lockfile") {
+		t.Fatalf("err = %v", err)
+	}
+	if record.Status != StatusFailed || !strings.Contains(record.Detail, "repository tool provisioning failed") {
+		t.Fatalf("record = %#v", record)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(manager.stateDirectory, "mise", "frostyard", "std")); len(entries) != 0 {
+		t.Fatalf("failed provisioning left a cache: %v", entries)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(strings.Join(command.Arguments, "\x00"), "new-session") {
+			t.Fatalf("a provider was launched after provisioning failed: %v", command.Arguments)
+		}
+	}
+}
+
+func TestOCIWorkerRefusesMiseTomlWithoutALock(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{pinFiles: map[string]string{"mise.toml": "[tools]\n"}}
+	manager, source := provisioningTestManager(t, runner)
+	_, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "implementer", Repository: "frostyard/std", Source: source})
+	if err == nil || !errors.Is(err, ErrNotReady) || !strings.Contains(err.Error(), "mise.toml without mise.lock") {
+		t.Fatalf("err = %v", err)
+	}
+	if runner.provisionRuns != 0 {
+		t.Fatal("provisioning ran without a lock")
 	}
 }

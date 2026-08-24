@@ -147,6 +147,23 @@ host mode for compatibility.
 
 The dashboard and state model do not depend on which adapter owns a worker.
 
+### Repository tool provisioning
+
+For a workspace that carries `mise.toml`, the node provisions the
+repository's declared tools before the provider starts
+([ADR-0012](../adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
+§2–3; [OCI workers spec](../specs/oci-workers.md) rule 6): a throwaway
+container of the same pinned image runs `mise install --locked` from a
+tmpfs copy of `mise.toml`, `mise.lock`, and `go.mod` into a per-repository
+cache under `<state>/mise/<owner>/<name>/<digest>`, and the worker container
+mounts that cache read-only at `/var/lib/snowcat-cockpit/mise`, where the
+image's `PATH` finds the shims. A declaration that cannot be satisfied — a
+tool absent from the lock, a checksum mismatch, `mise.toml` without a lock
+— fails the launch with the reason in the worker record, so a board
+campaign backs the lane off and shows the tool instead of a lease burning
+on an install. The digest keys the cache, so every later worker on the same
+pins reuses it without a run.
+
 ## Dashboard
 
 The dashboard grows in vertical slices:
