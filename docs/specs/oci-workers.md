@@ -63,7 +63,7 @@ Build all local images with `make oci-image`, or one with
 `make oci-image-copilot`. Build the corresponding images in Docker's distinct
 local store with `make docker-image` or `make docker-image-<provider>`. The
 image sources pin Codex CLI `0.149.0`, Claude
-Code `2.1.239`, Copilot CLI `1.0.80`, Go `1.26.6`, Node.js `26`, multi-architecture
+Code `2.1.239`, Copilot CLI `1.0.80`, Go `1.26.7` (the image tracks the highest `go.mod` directive in the fleet, because `GOTOOLCHAIN=local` refuses a lower one), Node.js `26`, multi-architecture
 base-image manifest digests, and the official amd64/arm64 provider release
 checksums. Launch uses a pre-existing image with `--pull=never`.
 
@@ -78,7 +78,12 @@ credential from Cockpit configuration.
 
 The first-slice command baseline is deliberately small: the base shell and
 Unix utilities, Go and Node.js, Git, GitHub CLI, OpenSSH client, curl, make,
-patch, jq, ripgrep, unzip, and `column`. Cockpit projects the exact running
+patch, jq, ripgrep, unzip, `column`, and `golangci-lint` at the fleet's
+pinned release (2.13.1 — the version `std`, `clix`, and `updex` gates
+require; an earlier campaign lost four workers to in-lease lint downloads
+crossing the PID ceiling). Every image sets `GOTOOLCHAIN=local`: a
+repository whose `go.mod` the image's Go cannot satisfy fails at the first
+`go` invocation instead of downloading a toolchain inside the lease. Cockpit projects the exact running
 `snowcat-cockpit` binary into the already-mounted worker workspace for
 worker-local target preparation and lease relay; it is not an independently
 versioned image tool. A new tool enters this list only after
