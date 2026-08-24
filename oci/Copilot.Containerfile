@@ -1,6 +1,6 @@
 FROM docker.io/library/node:26-bookworm-slim@sha256:cd565714d4da3e84bfd341e31448f81d47c6362198f152345297c9c1154e6341 AS node
 
-FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS copilot
+FROM docker.io/library/golang:1.26.7-bookworm@sha256:6ef6e30f0ea5c384f6d111cf856e024e3086bbdcb1779da3f3b3fbba0aea53d2 AS copilot
 
 ARG TARGETARCH=amd64
 ARG COPILOT_VERSION=1.0.80
@@ -19,16 +19,16 @@ RUN apt-get update \
     && tar --extract --gzip --file /tmp/copilot.tar.gz --directory /usr/local/bin copilot \
     && chmod 0755 /usr/local/bin/copilot
 
-FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS golangci
+FROM docker.io/library/golang:1.26.7-bookworm@sha256:6ef6e30f0ea5c384f6d111cf856e024e3086bbdcb1779da3f3b3fbba0aea53d2 AS golangci
 
 ARG TARGETARCH=amd64
-# The fleet's pinned lint release (std, clix, updex all require 2.12.2; updex's
-# gate refuses any other version). Pinned URL plus per-architecture SHA256 per
-# core ADR-0023. Retired once repositories declare tools in mise.lock.
-ARG GOLANGCI_LINT_VERSION=2.12.2
+# The fleet's pinned lint release (std, clix, and updex gates require exactly
+# this version). Pinned URL plus per-architecture SHA256 per core ADR-0023.
+# Retired once repositories declare tools in mise.lock.
+ARG GOLANGCI_LINT_VERSION=2.13.1
 RUN case "$TARGETARCH" in \
-      amd64) checksum=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553 ;; \
-      arm64) checksum=44cd40a8c76c86755375adfeea52cfd3533cb43d7bd647771e0ae065e166df3a ;; \
+      amd64) checksum=b17bfbc9d4aaa48be7f4f1ce3240bc3d8200c870c072bacf15c26219e2cfb9cc ;; \
+      arm64) checksum=908317c23db18448f924e853b3d8a659fd919614cd438f224810a4053daa2607 ;; \
       *) printf 'unsupported TARGETARCH: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
     esac \
     && curl --fail --location --show-error \
@@ -40,7 +40,7 @@ RUN case "$TARGETARCH" in \
     && install -m 0755 "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-${TARGETARCH}/golangci-lint" /usr/local/bin/golangci-lint \
     && /usr/local/bin/golangci-lint version --short | grep -qx "$GOLANGCI_LINT_VERSION"
 
-FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36
+FROM docker.io/library/golang:1.26.7-bookworm@sha256:6ef6e30f0ea5c384f6d111cf856e024e3086bbdcb1779da3f3b3fbba0aea53d2
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
