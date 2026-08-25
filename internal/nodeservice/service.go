@@ -158,6 +158,7 @@ type InstallRequest struct {
 	WorkerEnv       string
 	InstallRoot     string
 	UnitDirectory   string
+	ConfigPath      string
 	Environment     map[string]string
 }
 
@@ -179,7 +180,21 @@ type Record struct {
 	InstallRoot     string    `json:"installRoot"`
 	UnitPath        string    `json:"unitPath"`
 	EnvironmentPath string    `json:"environmentPath"`
+	ConfigPath      string    `json:"configPath,omitempty"`
 	InstalledAt     time.Time `json:"installedAt"`
+}
+
+// InstallPlan is the derived shape an install request converges to: the
+// content-addressed release ID and the exact service environment file the
+// install would write. It lets a caller decide whether an install is already
+// in place without changing service state.
+type InstallPlan struct {
+	Release         string
+	Listen          string
+	StateDirectory  string
+	SkillsDirectory string
+	SourceRoot      string
+	Environment     string
 }
 
 type ServiceState struct {
@@ -258,7 +273,8 @@ func (manager *Manager) Install(ctx context.Context, request InstallRequest) (Re
 		Listen: normalized.Listen, DashboardURL: dashboardURL(normalized.Listen),
 		StateDirectory: normalized.StateDirectory, SkillsDirectory: normalized.SkillsDirectory,
 		SourceRoot: normalized.SourceRoot, InstallRoot: normalized.InstallRoot,
-		UnitPath: unitPath, EnvironmentPath: environmentPath, InstalledAt: manager.now().UTC(),
+		UnitPath: unitPath, EnvironmentPath: environmentPath, ConfigPath: normalized.ConfigPath,
+		InstalledAt: manager.now().UTC(),
 	}
 	if err := writeJSONAtomic(filepath.Join(normalized.InstallRoot, recordName), record); err != nil {
 		return Result{}, err
@@ -273,6 +289,34 @@ func (manager *Manager) Install(ctx context.Context, request InstallRequest) (Re
 		return Result{Install: record}, fmt.Errorf("restart node service: %w", err)
 	}
 	return manager.verify(ctx, record)
+}
+
+// PlanInstall validates the request exactly as Install does and returns the
+// release ID and rendered service environment without touching the release
+// root, the unit, or systemd.
+func PlanInstall(request InstallRequest) (InstallPlan, error) {
+	normalized, executable, launcher, err := normalizeInstallRequest(request)
+	if err != nil {
+		return InstallPlan{}, err
+	}
+	releaseHash, err := releaseContentHash(executable, launcher)
+	if err != nil {
+		return InstallPlan{}, err
+	}
+	environment, err := renderEnvironment(normalized.ObserverEnv, normalized.WorkerEnv, normalized.Environment)
+	if err != nil {
+		return InstallPlan{}, err
+	}
+	return InstallPlan{
+		Release: releaseID(normalized.Version, releaseHash), Listen: normalized.Listen,
+		StateDirectory: normalized.StateDirectory, SkillsDirectory: normalized.SkillsDirectory,
+		SourceRoot: normalized.SourceRoot, Environment: environment,
+	}, nil
+}
+
+// ValidateListen reports whether address is a loopback host:port.
+func ValidateListen(address string) error {
+	return validateListenAddress(address)
 }
 
 func (manager *Manager) Status(ctx context.Context, paths Paths) (Result, error) {
@@ -440,6 +484,12 @@ func normalizeInstallRequest(request InstallRequest) (InstallRequest, string, st
 		*target.value, err = absoluteClean(*target.value)
 		if err != nil {
 			return InstallRequest{}, "", "", fmt.Errorf("%w: resolve %s", ErrInvalid, target.name)
+		}
+	}
+	if request.ConfigPath != "" {
+		request.ConfigPath, err = absoluteClean(request.ConfigPath)
+		if err != nil {
+			return InstallRequest{}, "", "", fmt.Errorf("%w: resolve config path", ErrInvalid)
 		}
 	}
 	executable, err := executableFile(request.Executable)

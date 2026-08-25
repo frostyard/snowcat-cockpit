@@ -60,9 +60,12 @@ var (
 	commitRE     = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 	interfaceRE  = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	imageIDRE    = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._/:@-]*@)?sha256:[0-9a-f]{64}$`)
-	scpRemoteRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^[:space:]]+$`)
-	dockerHostRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$`)
-	mcpServerRE  = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	// PinnedImageRE is the immutable worker image constraint (oci-workers spec):
+	// a bare sha256 image ID or a reference suffixed by @sha256:<64 hex>.
+	PinnedImageRE = imageIDRE
+	scpRemoteRE   = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^[:space:]]+$`)
+	dockerHostRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$`)
+	mcpServerRE   = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
 type LaunchRequest struct {

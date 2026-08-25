@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/frostyard/snowcat-cockpit/internal/nodeservice"
+	"github.com/frostyard/snowcat-cockpit/internal/nodeup"
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
 	"github.com/frostyard/snowcat-cockpit/internal/state"
@@ -345,5 +346,132 @@ func TestRunPreflightWritesReadyReceipt(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("temporary preflight workspace retained: %#v", entries)
+	}
+}
+
+const testNodeConfig = `{
+  "version": 1,
+  "listen": "127.0.0.1:7686",
+  "images": {"claude": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "providers": {"claude": {"mcpServer": "snowcat"}},
+  "repositories": ["frostyard/clix"],
+  "campaign": {"adapter": "oci", "discoverer": {"provider": "claude", "capacity": 1}, "implementer": {"provider": "claude", "capacity": 1}, "reviewer": {"provider": "claude", "capacity": 1}}
+}`
+
+func writeTestNodeConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "node.json")
+	if err := os.WriteFile(path, []byte(testNodeConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRunNodeUpBuildsRunnerFromConfigAndFlags(t *testing.T) {
+	path := writeTestNodeConfig(t)
+	service := &fakeNodeService{result: healthyNodeServiceResult()}
+	lookup := func(name string) (string, bool) {
+		values := map[string]string{"PATH": "/usr/bin", "GH_TOKEN": "secret"}
+		value, exists := values[name]
+		return value, exists
+	}
+	var captured *nodeup.Runner
+	execute := func(_ context.Context, runner *nodeup.Runner) (nodeup.Result, error) {
+		captured = runner
+		runner.Observe(nodeup.Step{Name: "doctor", Status: nodeup.StepOK, Detail: "9 checks"})
+		return nodeup.Result{ConfigPath: runner.ConfigPath, DryRun: runner.DryRun, DashboardURL: "http://127.0.0.1:7686", Steps: []nodeup.Step{{Name: "doctor", Status: nodeup.StepOK}}}, nil
+	}
+	var stdout, stderr bytes.Buffer
+	code := runNodeUp([]string{"--config", path, "--dry-run", "--install-root", "/install", "--unit-dir", "/units", "--timeout", "30s"}, &stdout, &stderr, service, func() (string, error) { return "/dist/snowcat-cockpit", nil }, lookup, execute)
+	if code != 0 {
+		t.Fatalf("exit = %d stderr = %s", code, stderr.String())
+	}
+	if captured == nil || !captured.DryRun || captured.InstallRoot != "/install" || captured.UnitDirectory != "/units" || captured.Executable != "/dist/snowcat-cockpit" || captured.ConfigPath != path {
+		t.Fatalf("runner = %#v", captured)
+	}
+	if captured.Config.Listen != "127.0.0.1:7686" || captured.Config.SkillsDirectory() != filepath.Join(captured.Config.StateDirectory, "worker-kit") {
+		t.Fatalf("config = %#v", captured.Config)
+	}
+	if captured.Ambient["PATH"] != "/usr/bin" {
+		t.Fatalf("ambient = %#v", captured.Ambient)
+	}
+	if _, leaked := captured.Ambient["GH_TOKEN"]; leaked {
+		t.Fatal("ambient environment must be allowlisted")
+	}
+	if captured.KitRevision == "" || captured.Service == nil || captured.Node == nil || captured.Preflight == nil {
+		t.Fatalf("runner dependencies incomplete: %#v", captured)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "doctor") || !strings.Contains(output, "9 checks") || !strings.Contains(output, "Dashboard: http://127.0.0.1:7686") || !strings.Contains(output, "Dry run") {
+		t.Fatalf("stdout = %q", output)
+	}
+}
+
+func TestRunNodeUpWritesJSONAndReportsFailures(t *testing.T) {
+	path := writeTestNodeConfig(t)
+	service := &fakeNodeService{result: healthyNodeServiceResult()}
+	execute := func(_ context.Context, runner *nodeup.Runner) (nodeup.Result, error) {
+		if runner.Observe != nil {
+			t.Fatal("json output must not stream step lines")
+		}
+		return nodeup.Result{ConfigPath: runner.ConfigPath, Steps: []nodeup.Step{{Name: "preflight", Status: nodeup.StepFailed, Detail: "no live proof for claude"}}}, nodeup.ErrConverge
+	}
+	var stdout, stderr bytes.Buffer
+	code := runNodeUp([]string{"--config", path, "--json"}, &stdout, &stderr, service, func() (string, error) { return "/dist/snowcat-cockpit", nil }, os.LookupEnv, execute)
+	if code != 1 || !strings.Contains(stdout.String(), `"status": "failed"`) || !strings.Contains(stderr.String(), "node up:") {
+		t.Fatalf("exit = %d stdout = %q stderr = %q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunNodeUpRejectsBadInputsBeforeConverging(t *testing.T) {
+	service := &fakeNodeService{}
+	executed := false
+	execute := func(context.Context, *nodeup.Runner) (nodeup.Result, error) {
+		executed = true
+		return nodeup.Result{}, nil
+	}
+	for _, args := range [][]string{
+		{"--config", filepath.Join(t.TempDir(), "missing.json")},
+		{"--config", writeTestNodeConfig(t), "extra"},
+		{"--config", writeTestNodeConfig(t), "--timeout", "0s"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := runNodeUp(args, &stdout, &stderr, service, func() (string, error) { return "/dist/snowcat-cockpit", nil }, os.LookupEnv, execute); code != 2 {
+			t.Fatalf("args %v exit = %d stderr = %s", args, code, stderr.String())
+		}
+	}
+	credential := filepath.Join(t.TempDir(), "node.json")
+	if err := os.WriteFile(credential, []byte(strings.Replace(testNodeConfig, `"frostyard/clix"`, `"ghp_0123456789abcdef"`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runNodeUp([]string{"--config", credential}, &stdout, &stderr, service, func() (string, error) { return "/dist/snowcat-cockpit", nil }, os.LookupEnv, execute); code != 2 || strings.Contains(stderr.String(), "ghp_0123456789abcdef") {
+		t.Fatalf("exit = %d stderr = %q", code, stderr.String())
+	}
+	if executed || service.action != "" {
+		t.Fatal("invalid input must not converge")
+	}
+}
+
+func TestRunNodeHelpListsUp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "node up [--config") {
+		t.Fatalf("exit = %d stdout = %q", code, stdout.String())
+	}
+	stdout.Reset()
+	if code := runNodeWithService([]string{"help"}, &stdout, &stderr, &fakeNodeService{}, nil, os.LookupEnv); code != 0 || !strings.Contains(stdout.String(), "node up") {
+		t.Fatalf("node help = %q", stdout.String())
+	}
+}
+
+func TestNodeStatusPrintsConfigPath(t *testing.T) {
+	result := healthyNodeServiceResult()
+	result.Install.ConfigPath = "/config/node.json"
+	var stdout bytes.Buffer
+	if err := writeNodeServiceResult(&stdout, result, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "Config: /config/node.json") {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
