@@ -1121,13 +1121,13 @@ const defaultRetainWorkspaces = 20
 func retainWorkspacesFromLookup(lookup func(string) string) (campaign.RetentionPolicy, error) {
 	value := lookup("SNOWCAT_COCKPIT_RETAIN_WORKSPACES")
 	if value == "" {
-		return campaign.RetentionPolicy{Count: defaultRetainWorkspaces}, nil
+		return campaign.RetentionPolicy{Configured: true, Count: defaultRetainWorkspaces}, nil
 	}
 	if count, err := strconv.Atoi(value); err == nil {
 		if count < 0 {
 			return campaign.RetentionPolicy{}, errors.New("SNOWCAT_COCKPIT_RETAIN_WORKSPACES count must not be negative")
 		}
-		return campaign.RetentionPolicy{Count: count}, nil
+		return campaign.RetentionPolicy{Configured: true, Count: count}, nil
 	}
 	age, err := time.ParseDuration(value)
 	if err != nil {
@@ -1136,7 +1136,7 @@ func retainWorkspacesFromLookup(lookup func(string) string) (campaign.RetentionP
 	if age < 0 {
 		return campaign.RetentionPolicy{}, errors.New("SNOWCAT_COCKPIT_RETAIN_WORKSPACES duration must not be negative")
 	}
-	return campaign.RetentionPolicy{Age: age}, nil
+	return campaign.RetentionPolicy{Configured: true, Age: age}, nil
 }
 
 func loadProfileSnapshot(skillsDirectory, stateDirectory string) (profile.Snapshot, error) {

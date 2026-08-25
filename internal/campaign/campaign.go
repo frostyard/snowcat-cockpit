@@ -134,12 +134,15 @@ type WorkerManager interface {
 
 // RetentionPolicy bounds how many terminal, nothing-left-to-matter worker
 // workspaces the campaign controller keeps before cleaning them
-// automatically. Count and Age are mutually exclusive; a zero value for both
-// disables automatic cleanup, so an operator or test that never sets this
-// field sees no behavior change.
+// automatically. Count and Age are mutually exclusive. Configured must be
+// true for the policy to take effect at all: an operator or test that never
+// sets this field gets the zero value, Configured false, and sees no
+// behavior change, while an explicit Count of 0 (Configured true) cleans
+// every eligible candidate on each sweep.
 type RetentionPolicy struct {
-	Count int
-	Age   time.Duration
+	Configured bool
+	Count      int
+	Age        time.Duration
 }
 
 type QueueObserver interface {
@@ -767,7 +770,7 @@ type cleanupCandidate struct {
 // failure behavior.
 func (controller *Controller) sweepCleanupCandidates(ctx context.Context) {
 	policy := controller.retain
-	if policy.Count <= 0 && policy.Age <= 0 {
+	if !policy.Configured {
 		return
 	}
 	controller.mu.Lock()

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -660,7 +661,7 @@ func TestSweepCleanupCandidatesEnforcesCountRetention(t *testing.T) {
 	controller, err := New(Config{
 		StateDirectory: t.TempDir(), Repositories: &fakeRepositories{}, Preflights: &fakePreflights{},
 		Queue: &fakeQueue{counts: map[string]map[queueview.Role]int{}}, Workers: workers,
-		RetainWorkspaces: RetentionPolicy{Count: 1},
+		RetainWorkspaces: RetentionPolicy{Configured: true, Count: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -693,12 +694,41 @@ func TestSweepCleanupCandidatesEnforcesCountRetention(t *testing.T) {
 	}
 }
 
+func TestSweepCleanupCandidatesEnforcesExplicitZeroCount(t *testing.T) {
+	workers := &fakeWorkers{}
+	controller, err := New(Config{
+		StateDirectory: t.TempDir(), Repositories: &fakeRepositories{}, Preflights: &fakePreflights{},
+		Queue: &fakeQueue{counts: map[string]map[queueview.Role]int{}}, Workers: workers,
+		RetainWorkspaces: RetentionPolicy{Configured: true, Count: 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.cleanupCandidates = map[string]time.Time{
+		"worker-old": time.Now().Add(-time.Hour),
+		"worker-new": time.Now(),
+	}
+
+	controller.sweepCleanupCandidates(context.Background())
+
+	workers.mu.Lock()
+	cleaned := append([]string(nil), workers.cleaned...)
+	workers.mu.Unlock()
+	sort.Strings(cleaned)
+	if len(cleaned) != 2 || cleaned[0] != "worker-new" || cleaned[1] != "worker-old" {
+		t.Fatalf("cleaned = %#v, want both candidates sent to Cleanup with an explicit zero retention count", cleaned)
+	}
+	if len(controller.cleanupCandidates) != 0 {
+		t.Fatalf("cleanupCandidates = %#v, want no candidates retained with an explicit zero retention count", controller.cleanupCandidates)
+	}
+}
+
 func TestSweepCleanupCandidatesEnforcesAgeRetention(t *testing.T) {
 	workers := &fakeWorkers{}
 	controller, err := New(Config{
 		StateDirectory: t.TempDir(), Repositories: &fakeRepositories{}, Preflights: &fakePreflights{},
 		Queue: &fakeQueue{counts: map[string]map[queueview.Role]int{}}, Workers: workers,
-		RetainWorkspaces: RetentionPolicy{Age: time.Hour},
+		RetainWorkspaces: RetentionPolicy{Configured: true, Age: time.Hour},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -723,7 +753,7 @@ func TestSweepCleanupCandidatesRetainsOnCleanupFailure(t *testing.T) {
 	controller, err := New(Config{
 		StateDirectory: t.TempDir(), Repositories: &fakeRepositories{}, Preflights: &fakePreflights{},
 		Queue: &fakeQueue{counts: map[string]map[queueview.Role]int{}}, Workers: workers,
-		RetainWorkspaces: RetentionPolicy{Age: time.Minute},
+		RetainWorkspaces: RetentionPolicy{Configured: true, Age: time.Minute},
 	})
 	if err != nil {
 		t.Fatal(err)

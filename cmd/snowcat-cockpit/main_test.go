@@ -278,15 +278,19 @@ func TestRetainWorkspacesFromLookup(t *testing.T) {
 	}
 
 	policy, err := retainWorkspacesFromLookup(lookup(nil))
-	if err != nil || policy != (campaign.RetentionPolicy{Count: defaultRetainWorkspaces}) {
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Count: defaultRetainWorkspaces}) {
 		t.Fatalf("default policy = %#v, error = %v", policy, err)
 	}
 	policy, err = retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "5"}))
-	if err != nil || policy != (campaign.RetentionPolicy{Count: 5}) {
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Count: 5}) {
 		t.Fatalf("count policy = %#v, error = %v", policy, err)
 	}
+	policy, err = retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "0"}))
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Count: 0}) {
+		t.Fatalf("explicit zero count policy = %#v, error = %v", policy, err)
+	}
 	policy, err = retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "6h"}))
-	if err != nil || policy != (campaign.RetentionPolicy{Age: 6 * time.Hour}) {
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Age: 6 * time.Hour}) {
 		t.Fatalf("duration policy = %#v, error = %v", policy, err)
 	}
 	if _, err := retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "-1"})); err == nil {
