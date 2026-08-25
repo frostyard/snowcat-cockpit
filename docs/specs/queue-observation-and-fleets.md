@@ -11,10 +11,17 @@ continue to use Snowcat MCP directly.
 | --- | --- | --- |
 | `SNOWCAT_COCKPIT_MCP_URL` | with token | Absolute `http` or `https` MCP endpoint; no user info, query, or fragment |
 | `SNOWCAT_COCKPIT_MCP_TOKEN` | with URL | Snowcat-minted bearer token; process environment only |
+| `SNOWCAT_CF_ACCESS_CLIENT_ID` | with Access secret | Optional Cloudflare Access service-token client ID; process environment only |
+| `SNOWCAT_CF_ACCESS_CLIENT_SECRET` | with Access client ID | Optional Cloudflare Access service-token client secret; process environment only |
 
-If both variables are absent, the node starts with queue observation
+If both MCP variables are absent, the node starts with queue observation
 unavailable and single-worker operations unchanged. If only one is present or
-the URL is invalid, `serve` MUST fail without printing the token.
+the URL is invalid, `serve` MUST fail without printing the token. The Access
+pair is optional for an endpoint without Cloudflare Access, but if either value
+is present without the other, `serve` MUST fail without printing either value.
+Every observer request with the pair configured MUST send both
+`CF-Access-Client-Id` and `CF-Access-Client-Secret` in addition to Snowcat's
+Bearer authorization.
 
 The token MUST be minted with Snowcat's server-enforced `observer` profile,
 which grants only `list_work` and `get_work`. Cockpit invokes only `list_work`.
@@ -31,18 +38,22 @@ files, one for queue observation and one for worker MCP access:
   a test supplies `SNOWCAT_COCKPIT_OBSERVER_ENV`, and parse only one literal
   `export SNOWCAT_OBSERVER_TOKEN=<token>` declaration from it;
 - read `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/mcp-token.env`, unless a
-  test supplies `SNOWCAT_COCKPIT_WORKER_ENV`, and parse only one literal
-  `export SNOWCAT_MCP_TOKEN=<token>` declaration from it;
+  test supplies `SNOWCAT_COCKPIT_WORKER_ENV`, and parse exactly one literal
+  declaration each for `export SNOWCAT_MCP_TOKEN=<token>`,
+  `export CF_ACCESS_CLIENT_ID=<client-id>`, and
+  `export CF_ACCESS_CLIENT_SECRET=<client-secret>`;
 - require each credential file to be a regular, non-symlink file owned by the
   current user with mode `0600`, and MUST NOT evaluate either file as shell
   code;
 - set `SNOWCAT_COCKPIT_MCP_URL` to
-  `https://snowcat.goat-snake.ts.net/mcp`;
+  `https://snowcat.frostyard.org/mcp`;
 - set worker-local `SNOWCAT_MCP_URL` to the same fixed endpoint without copying
   its value into an argument or file;
 - map the observer token to `SNOWCAT_COCKPIT_MCP_TOKEN` and the worker token to
-  `SNOWCAT_MCP_TOKEN`, remove `SNOWCAT_OBSERVER_TOKEN`, and use `exec` with
-  preserved argument boundaries;
+  `SNOWCAT_MCP_TOKEN`, map the Access pair to
+  `SNOWCAT_CF_ACCESS_CLIENT_ID` and `SNOWCAT_CF_ACCESS_CLIENT_SECRET`, remove
+  the three source variables, and use `exec` with preserved argument
+  boundaries;
 - run `dist/snowcat-cockpit serve`, unless a test supplies
   `SNOWCAT_COCKPIT_BIN`.
 
@@ -54,13 +65,10 @@ the node process. It MUST NOT print, persist, or place the token in argv. A
 missing GitHub CLI or invalid login MUST fail before the node starts. An
 operator-supplied `GH_TOKEN` takes precedence.
 
-When any Docker image variable is set, the wrapper resolves its fixed Snowcat
-tailnet hostname with `getent ahostsv4` and exports one
-`SNOWCAT_COCKPIT_DOCKER_ADD_HOST=<hostname>:<IPv4>` mapping unless the operator
-supplied one. This gives Docker bridge workers the single tailnet route they
-need while retaining Docker's public DNS for provider and GitHub endpoints.
-The worker manager validates the mapping before workspace allocation, and host
-networking remains forbidden.
+The wrapper MUST NOT synthesize `SNOWCAT_COCKPIT_DOCKER_ADD_HOST`; Docker bridge
+workers resolve the Cloudflare Tunnel endpoint through ordinary DNS. The worker
+manager continues to validate an operator-supplied mapping before workspace
+allocation, and host networking remains forbidden.
 
 ## HTTP interface
 

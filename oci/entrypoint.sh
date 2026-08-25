@@ -29,7 +29,7 @@ write_codex_worker_profile() {
     # without them ("connection closed: initialize response"). env_vars
     # forwards the named variables from Codex's own environment — names only,
     # so no value enters this file.
-    printf 'env_vars = ["SNOWCAT_MCP_URL", "SNOWCAT_MCP_TOKEN"]\n'
+    printf 'env_vars = ["SNOWCAT_MCP_URL", "SNOWCAT_MCP_TOKEN", "SNOWCAT_CF_ACCESS_CLIENT_ID", "SNOWCAT_CF_ACCESS_CLIENT_SECRET"]\n'
     printf 'required = true\n'
   } >"$profile_path"
 }

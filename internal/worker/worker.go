@@ -302,6 +302,11 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	if !hasNonemptyEnvironment(manager.environment(), "SNOWCAT_MCP_TOKEN") {
 		return Record{}, fmt.Errorf("%w: SNOWCAT_MCP_TOKEN is not present in the node environment", ErrNotReady)
 	}
+	accessClientID := hasNonemptyEnvironment(manager.environment(), "SNOWCAT_CF_ACCESS_CLIENT_ID")
+	accessClientSecret := hasNonemptyEnvironment(manager.environment(), "SNOWCAT_CF_ACCESS_CLIENT_SECRET")
+	if accessClientID != accessClientSecret {
+		return Record{}, fmt.Errorf("%w: SNOWCAT_CF_ACCESS_CLIENT_ID and SNOWCAT_CF_ACCESS_CLIENT_SECRET must be present together", ErrNotReady)
+	}
 	gitPath, err := manager.lookPath("git")
 	if err != nil {
 		return Record{}, fmt.Errorf("%w: git is not available", ErrNotReady)
@@ -832,6 +837,7 @@ func hostProviderCommand(provider, mcpServer, providerPath, prompt, helper, work
 			"--config", `mcp_servers.` + mcpServer + `.enabled=false`,
 			"--config", `mcp_servers.snowcat-cockpit.command=` + strconv.Quote(helper),
 			"--config", `mcp_servers.snowcat-cockpit.args=` + jsonStringArray(relayArguments),
+			"--config", `mcp_servers.snowcat-cockpit.env_vars=["SNOWCAT_MCP_URL","SNOWCAT_MCP_TOKEN","SNOWCAT_CF_ACCESS_CLIENT_ID","SNOWCAT_CF_ACCESS_CLIENT_SECRET"]`,
 			prompt,
 		}
 	case "claude":
@@ -1088,7 +1094,9 @@ func ociHostEnvironment(environment []string) []string {
 		"XDG_RUNTIME_DIR": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 		"XDG_CACHE_HOME": true, "DBUS_SESSION_BUS_ADDRESS": true,
 		"CONTAINER_HOST": true, "TMPDIR": true,
-		"SNOWCAT_MCP_TOKEN": true, "SNOWCAT_MCP_URL": true, "GH_TOKEN": true,
+		"SNOWCAT_MCP_TOKEN": true, "SNOWCAT_MCP_URL": true,
+		"SNOWCAT_CF_ACCESS_CLIENT_ID": true, "SNOWCAT_CF_ACCESS_CLIENT_SECRET": true,
+		"GH_TOKEN": true,
 	}
 	result := make([]string, 0, len(allowed))
 	for _, entry := range environment {
@@ -1158,6 +1166,8 @@ func (manager *Manager) ociArguments(record Record, image, prompt string) []stri
 	arguments = append(arguments,
 		"--env", "SNOWCAT_MCP_TOKEN",
 		"--env", "SNOWCAT_MCP_URL",
+		"--env", "SNOWCAT_CF_ACCESS_CLIENT_ID",
+		"--env", "SNOWCAT_CF_ACCESS_CLIENT_SECRET",
 		"--env", "GH_TOKEN",
 	)
 	return append(arguments, image, prompt, record.Model, record.ID, record.MCPServer)

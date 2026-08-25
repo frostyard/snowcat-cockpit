@@ -344,6 +344,7 @@ func runWorkerLeaseProxy(args []string, stdout, stderr io.Writer) int {
 	}
 	relay, err := leaseproxy.New(leaseproxy.Config{
 		Endpoint: os.Getenv("SNOWCAT_MCP_URL"), Token: os.Getenv("SNOWCAT_MCP_TOKEN"),
+		AccessClientID: os.Getenv("SNOWCAT_CF_ACCESS_CLIENT_ID"), AccessClientSecret: os.Getenv("SNOWCAT_CF_ACCESS_CLIENT_SECRET"),
 		WorkerID: *workerID, Workspace: *workspace, Input: os.Stdin, Output: stdout, Errors: stderr,
 	})
 	if err != nil {
@@ -1110,7 +1111,10 @@ func queueObserverFromLookup(lookup func(string) string) (snowcatObserver, error
 	if token == "" {
 		return nil, errors.New("SNOWCAT_COCKPIT_MCP_TOKEN is required when queue observation is configured")
 	}
-	return queueview.NewHTTPObserver(queueview.HTTPConfig{Endpoint: endpoint, Token: token})
+	return queueview.NewHTTPObserver(queueview.HTTPConfig{
+		Endpoint: endpoint, Token: token,
+		AccessClientID: lookup("SNOWCAT_CF_ACCESS_CLIENT_ID"), AccessClientSecret: lookup("SNOWCAT_CF_ACCESS_CLIENT_SECRET"),
+	})
 }
 
 // defaultRetainWorkspaces bounds automatic workspace cleanup when the

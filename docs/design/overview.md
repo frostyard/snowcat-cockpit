@@ -208,7 +208,8 @@ Therefore:
 - cockpit does not persist terminal output outside tmux scrollback;
 - cockpit does not print environment variables or generated commands containing
   secrets;
-- provider and MCP credentials are never accepted as CLI arguments; and
+- provider, MCP, and Cloudflare Access credentials are never accepted as CLI
+  arguments; and
 - automatic browser exposure is outside the spike.
 
 tmux is persistence, not isolation. Cockpit trusts the supplied working

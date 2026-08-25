@@ -34,7 +34,7 @@ is `snowcat-cockpit.service`. Defaults are:
 | `skills-dir` | the node CLI worker-kit default |
 | `source-root` | `<state-dir>/sources` |
 | `observer-env` | `$SNOWCAT_COCKPIT_OBSERVER_ENV`, then `$XDG_CONFIG_HOME/snowcat/profile-observer.env`, then `$HOME/.config/snowcat/profile-observer.env` |
-| `worker-env` | `$SNOWCAT_COCKPIT_WORKER_ENV`, then `$XDG_CONFIG_HOME/snowcat/mcp-token.env`, then `$HOME/.config/snowcat/mcp-token.env` |
+| `worker-env` | `$SNOWCAT_COCKPIT_WORKER_ENV`, then `$XDG_CONFIG_HOME/snowcat/mcp-token.env`, then `$HOME/.config/snowcat/mcp-token.env`; contains the Snowcat worker token and Cloudflare Access service-token pair |
 | `install-root` | `$HOME/.local/libexec/snowcat-cockpit` |
 | `unit-dir` | `$XDG_CONFIG_HOME/systemd/user`, then `$HOME/.config/systemd/user` |
 
@@ -97,7 +97,7 @@ Delegate=yes
    `systemctl` only with `--user` and the fixed unit name.
 2. Install MUST validate the loopback address and both credential files'
    regular-file, non-symlink, current-owner, and `0600` posture before changing
-   service state. It MUST NOT read or copy either token.
+   service state. It MUST NOT read or copy any credential value.
 3. Install MUST copy the exact running executable and companion reviewed
    wrapper into a content-addressed release using private directories and
    atomic file replacement. It MUST atomically switch `current` only after the
@@ -106,7 +106,8 @@ Delegate=yes
    systemd syntax, and reject newline, control-character, glob, quote,
    backslash, or whitespace injection in the exact environment-file path.
 5. No generated artifact may contain an observer token, Snowcat MCP token,
-   provider credential, GitHub token, lease token, arbitrary environment dump,
+   Cloudflare Access credential, provider credential, GitHub token, lease token,
+   arbitrary environment dump,
    terminal output, or Snowcat queue record. Environment projection is exactly
    the allowlist above.
 6. Install MUST run `daemon-reload`, `enable`, and `restart`, then require the

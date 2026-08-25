@@ -84,17 +84,21 @@ type WorkerObservation struct {
 }
 
 type HTTPConfig struct {
-	Endpoint   string
-	Token      string
-	HTTPClient *http.Client
-	Now        func() time.Time
+	Endpoint           string
+	Token              string
+	AccessClientID     string
+	AccessClientSecret string
+	HTTPClient         *http.Client
+	Now                func() time.Time
 }
 
 type HTTPObserver struct {
-	endpoint   *url.URL
-	token      string
-	httpClient *http.Client
-	now        func() time.Time
+	endpoint           *url.URL
+	token              string
+	accessClientID     string
+	accessClientSecret string
+	httpClient         *http.Client
+	now                func() time.Time
 }
 
 func NewHTTPObserver(config HTTPConfig) (*HTTPObserver, error) {
@@ -112,6 +116,9 @@ func NewHTTPObserver(config HTTPConfig) (*HTTPObserver, error) {
 		return nil, fmt.Errorf("%w: Snowcat MCP token is required", ErrInvalid)
 	}
 	config.Token = strings.TrimSpace(config.Token)
+	if (config.AccessClientID == "") != (config.AccessClientSecret == "") || strings.ContainsAny(config.AccessClientID+config.AccessClientSecret, "\r\n") {
+		return nil, fmt.Errorf("%w: Cloudflare Access client ID and secret must be supplied together as single-line values", ErrInvalid)
+	}
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{
 			Timeout: 15 * time.Second,
@@ -123,7 +130,11 @@ func NewHTTPObserver(config HTTPConfig) (*HTTPObserver, error) {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
-	return &HTTPObserver{endpoint: endpoint, token: config.Token, httpClient: config.HTTPClient, now: config.Now}, nil
+	return &HTTPObserver{
+		endpoint: endpoint, token: config.Token,
+		accessClientID: config.AccessClientID, accessClientSecret: config.AccessClientSecret,
+		httpClient: config.HTTPClient, now: config.Now,
+	}, nil
 }
 
 func (observer *HTTPObserver) Observe(ctx context.Context, repository string) (Snapshot, error) {
@@ -302,6 +313,10 @@ func (observer *HTTPObserver) list(ctx context.Context, arguments listArguments)
 		return nil, fmt.Errorf("build Snowcat request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+observer.token)
+	if observer.accessClientID != "" {
+		request.Header.Set("CF-Access-Client-Id", observer.accessClientID)
+		request.Header.Set("CF-Access-Client-Secret", observer.accessClientSecret)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
 	response, err := observer.httpClient.Do(request)

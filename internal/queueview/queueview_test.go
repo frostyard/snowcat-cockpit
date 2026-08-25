@@ -21,6 +21,12 @@ func TestHTTPObserverTakesOneBoundedClaimableSnapshot(t *testing.T) {
 		if got := request.Header.Get("Authorization"); got != "Bearer observer-secret" {
 			t.Fatalf("Authorization = %q", got)
 		}
+		if got := request.Header.Get("CF-Access-Client-Id"); got != "access-client-id" {
+			t.Fatalf("CF-Access-Client-Id = %q", got)
+		}
+		if got := request.Header.Get("CF-Access-Client-Secret"); got != "access-client-secret" {
+			t.Fatalf("CF-Access-Client-Secret = %q", got)
+		}
 		var input rpcRequest
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 			t.Fatal(err)
@@ -69,7 +75,11 @@ func TestHTTPObserverTakesOneBoundedClaimableSnapshot(t *testing.T) {
 	})}
 
 	now := time.Date(2026, 8, 21, 19, 0, 0, 0, time.UTC)
-	observer, err := NewHTTPObserver(HTTPConfig{Endpoint: "https://snowcat.test/mcp", Token: "observer-secret", HTTPClient: client, Now: func() time.Time { return now }})
+	observer, err := NewHTTPObserver(HTTPConfig{
+		Endpoint: "https://snowcat.test/mcp", Token: "observer-secret",
+		AccessClientID: "access-client-id", AccessClientSecret: "access-client-secret",
+		HTTPClient: client, Now: func() time.Time { return now },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,6 +301,9 @@ func TestHTTPObserverValidatesConfigurationAndRepository(t *testing.T) {
 		{Endpoint: "https://secret@example.com/mcp", Token: "secret"},
 		{Endpoint: "https://example.com/mcp?token=nope", Token: "secret"},
 		{Endpoint: "https://example.com/mcp", Token: ""},
+		{Endpoint: "https://example.com/mcp", Token: "secret", AccessClientID: "id-only"},
+		{Endpoint: "https://example.com/mcp", Token: "secret", AccessClientSecret: "secret-only"},
+		{Endpoint: "https://example.com/mcp", Token: "secret", AccessClientID: "bad\nid", AccessClientSecret: "access-secret"},
 	} {
 		if _, err := NewHTTPObserver(config); !errors.Is(err, ErrInvalid) {
 			t.Errorf("NewHTTPObserver(%#v) error = %v", config, err)

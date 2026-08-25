@@ -86,13 +86,15 @@ campaign is the bounded persistent exception described below.
 For the standard local credential files at
 `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env` (one
 `export SNOWCAT_OBSERVER_TOKEN=<token>`) and
-`${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/mcp-token.env` (one
-`export SNOWCAT_MCP_TOKEN=<token>`), build once and use the checked-in
-wrapper. Override either path with `SNOWCAT_COCKPIT_OBSERVER_ENV` and
+`${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/mcp-token.env` (one each of
+`export SNOWCAT_MCP_TOKEN=<token>`,
+`export CF_ACCESS_CLIENT_ID=<client-id>`, and
+`export CF_ACCESS_CLIENT_SECRET=<client-secret>`), build once and use the
+checked-in wrapper. Override either path with `SNOWCAT_COCKPIT_OBSERVER_ENV` and
 `SNOWCAT_COCKPIT_WORKER_ENV` respectively. Both files must be regular,
 non-symlink, current-user-owned files with mode `0600`. The wrapper verifies
-both files, reads only their expected export, fixes the MCP URL to
-`https://snowcat.goat-snake.ts.net/mcp`, and removes the source variables
+both files, reads only those expected declarations, fixes the MCP URL to
+`https://snowcat.frostyard.org/mcp`, and removes the source variables
 before starting Cockpit:
 
 ```bash
@@ -217,7 +219,11 @@ make oci-image
 # Run the three export commands printed by make oci-image.
 read -rsp 'Snowcat worker token: ' SNOWCAT_MCP_TOKEN; echo
 export SNOWCAT_MCP_TOKEN
-export SNOWCAT_MCP_URL=https://snowcat.goat-snake.ts.net/mcp
+read -rsp 'Cloudflare Access client ID: ' SNOWCAT_CF_ACCESS_CLIENT_ID; echo
+export SNOWCAT_CF_ACCESS_CLIENT_ID
+read -rsp 'Cloudflare Access client secret: ' SNOWCAT_CF_ACCESS_CLIENT_SECRET; echo
+export SNOWCAT_CF_ACCESS_CLIENT_SECRET
+export SNOWCAT_MCP_URL=https://snowcat.frostyard.org/mcp
 
 go run ./cmd/snowcat-cockpit worker launch \
   --adapter oci \
@@ -231,11 +237,11 @@ go run ./cmd/snowcat-cockpit worker launch \
 For explicit Docker compatibility, run `make docker-image` and use
 `--runtime docker` with the printed `SNOWCAT_COCKPIT_DOCKER_*_IMAGE` exports.
 Cockpit records whether the Docker daemon is rootless or rootful; rootful Docker
-is not described as host isolation. The checked-in serve wrapper supplies
-a validated host mapping to Docker bridge workers so the fixed Snowcat tailnet
-endpoint resolves without replacing public DNS or using host networking;
-direct CLI launches can set `SNOWCAT_COCKPIT_DOCKER_ADD_HOST` to an explicit
-`hostname:IPv4` value.
+is not described as host isolation. Docker bridge workers resolve the fixed
+Cloudflare Tunnel endpoint through ordinary DNS. Direct CLI launches may still
+set `SNOWCAT_COCKPIT_DOCKER_ADD_HOST` to an explicit `hostname:IPv4` value for
+an independently managed endpoint; the checked-in wrapper does not synthesize
+one.
 
 Version tags publish all three worker images for `linux/amd64` and
 `linux/arm64` to `ghcr.io/frostyard/snowcat-cockpit-worker`. The
@@ -251,11 +257,14 @@ private regular non-symlink provider files at either
 `${COPILOT_HOME:-$HOME/.copilot}/mcp-config.json`, and
 `${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}/{hosts.yml,config.yml}`,
 and a current provider preflight. The worker receives only those exact
-files, its worktree, `SNOWCAT_MCP_TOKEN`, `SNOWCAT_MCP_URL`, and `GH_TOKEN` by
-environment-variable name. When the checked-in serve wrapper starts with an OCI image configured, it
+files, its worktree, `SNOWCAT_MCP_TOKEN`, `SNOWCAT_MCP_URL`,
+`SNOWCAT_CF_ACCESS_CLIENT_ID`, `SNOWCAT_CF_ACCESS_CLIENT_SECRET`, and `GH_TOKEN`
+by environment-variable name. When the checked-in serve wrapper starts with an
+OCI image configured, it
 projects `GH_TOKEN` from the current `gh` keyring login unless the operator
 already supplied it. It also projects the wrapper's fixed Snowcat URL by
-environment-variable name for every provider's worker-local lease relay.
+environment-variable name and the Cloudflare Access service-token pair from the
+protected worker credential file for every provider's worker-local lease relay.
 Host mode remains the default interactive path. See
 the [rootless OCI worker contract](docs/specs/oci-workers.md) for the complete
 boundary.
