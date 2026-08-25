@@ -708,14 +708,17 @@ func (manager *Manager) OpenConsole(ctx context.Context, workerID string) (Conso
 		tmuxPath, "-S", manager.socketPath(workerID), "attach-session", "-t", "worker",
 	)
 	command.Env = manager.environment()
+	var stderr limitedBuffer
+	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
 		return Console{}, fmt.Errorf("start loopback worker console: %w", err)
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
 	process := &consoleProcess{command: command, url: url}
 	manager.consoles[workerID] = process
+	exited := make(chan error, 1)
 	go func() {
-		_ = command.Wait()
+		exited <- command.Wait()
 		manager.mutex.Lock()
 		if manager.consoles[workerID] == process {
 			delete(manager.consoles, workerID)
@@ -729,6 +732,17 @@ func (manager *Manager) OpenConsole(ctx context.Context, workerID string) (Conso
 		if dialErr == nil {
 			_ = connection.Close()
 			return Console{URL: url}, nil
+		}
+		select {
+		case waitErr := <-exited:
+			manager.stopConsoleLocked(workerID)
+			detail := strings.TrimSpace(stderr.String())
+			message := fmt.Sprintf("ttyd exited before the console became ready: %v", waitErr)
+			if detail != "" {
+				message += ": " + detail
+			}
+			return Console{}, fmt.Errorf("%w: %s", ErrNotReady, message)
+		default:
 		}
 		if time.Now().After(deadline) {
 			manager.stopConsoleLocked(workerID)
