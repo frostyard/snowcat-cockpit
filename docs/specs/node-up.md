@@ -50,9 +50,9 @@ like a credential (`snowcat_`, `gho_`, `ghp_`, `ghu_`, `ghs_`, `ghr_`,
   "version": 1,
   "listen": "127.0.0.1:7686",
   "images": {
-    "codex": "ghcr.io/frostyard/snowcat-cockpit-worker:codex-v0.2.1@sha256:920a53dec2c9c24b8b0072e04419fc2ae3060f15ccbb0b2aad37693882020c0d",
-    "claude": "ghcr.io/frostyard/snowcat-cockpit-worker:claude-v0.2.1@sha256:a9dc6cccde4cfdf7dff9788e415ccec87f9a81c394650fc0a84930c527bdbd61",
-    "copilot": "ghcr.io/frostyard/snowcat-cockpit-worker:copilot-v0.2.1@sha256:e6a774b5e67f850b41bd78facae0b56da78a6e405a1a9f8e19c8156566e77aaf"
+    "codex": "ghcr.io/frostyard/snowcat-cockpit-worker:codex-v0.2.1@sha256:40bdbef3c7ad5dc86caa2dabd1b02b848a674dacac20f9c2d593f09d457a4b65",
+    "claude": "ghcr.io/frostyard/snowcat-cockpit-worker:claude-v0.2.1@sha256:8a4ec5d9d01c31f1875131601e16349aa233ac6c1f501bf3343628c92e08d134",
+    "copilot": "ghcr.io/frostyard/snowcat-cockpit-worker:copilot-v0.2.1@sha256:687d9c18120ba2ebe27d8c875961fd0b4c87737610dd0c9d32b0a92dfb16435f"
   },
   "environment": {"CODEX_HOME": "/home/operator/.codex"},
   "providers": {
