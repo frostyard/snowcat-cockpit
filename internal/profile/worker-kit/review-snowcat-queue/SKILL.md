@@ -48,12 +48,19 @@ maximizing comments.
 
 - Read the origin item with `get_work(review.originItemId)`: its objective,
   acceptance criteria, instructions, and `sourceRef` issue are the contract the
-  pull request claims to satisfy. Read the pull request and its diff at exactly
+  pull request claims to satisfy. Read the head's check runs first (`gh pr
+  checks <n> --repo <owner>/<repo>` or `gh api
+  repos/<owner>/<repo>/commits/<head SHA>/check-runs`) and treat their
+  conclusions as the evidence for any CI-anchored acceptance criterion — the
+  description is the author's claim, never evidence of a check's state, and a
+  run still in progress means wait or return `unable-to-review`, never infer
+  from the body. Read the pull request and its diff at exactly
   `review.headSha` (`gh pr diff <n>` or `gh api repos/<owner>/<repo>/pulls/<n>/files`);
   check the head out and run the repository's non-mutating gate — `make
-  verify` where it exists — never `make check` or any target that formats or
-  rewrites files (`run-tests` is allowed; `write` and anything on GitHub are
-  not).
+  verify`, unconditionally; its absence is itself a blocker
+  (`defect:makefile:verify-missing`) — never `make check` or any target that
+  formats or rewrites files (`run-tests` is allowed; `write` and anything on
+  GitHub are not).
 - **Cognitive diversity.** If you completed the origin item yourself in this
   session or otherwise authored the pull request, `release_work` before judging
   so an independent worker reviews it. Prefer a different model or provider
@@ -89,8 +96,9 @@ maximizing comments.
   e.g. `defect:<path>:<slug>`), location, contract, impact, resolution,
   verification }`; at most three `advisories` `{ fingerprint, text }`. A block
   needs at least one blocker; a pass carries none.
-- Put the head SHA you reviewed and the checks you ran in `result.evidence`, and
-  the model you ran in `result.model` (provenance, never verified). Do **not**
+- Put the head SHA you reviewed, each check run's name and conclusion, and the
+  local `make verify` result in `result.evidence`, and the model you ran in
+  `result.model` (provenance, never verified). Do **not**
   report the pull request as an artifact — it is not yours — and create no
   `followUps` (a `pr-review` creates none): send `result.artifacts: []` and
   `followUps: []`, or omit both — the `complete_work` schema defaults each

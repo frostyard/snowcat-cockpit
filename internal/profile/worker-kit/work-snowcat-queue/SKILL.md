@@ -74,6 +74,19 @@ checkout you never mutate. Every follow-up you propose declares its own
   completion that reports an open, non-draft pull request there and tells you
   to `gh pr ready --undo <n>` and complete again. A bounded independent review
   (`pr-review`, below) marks it ready once it passes; you never do.
+- Every pull request body MUST follow the repository's own
+  `.github/pull_request_template.md` when one exists: read it first
+  (`cat .github/pull_request_template.md`), then write the body from it with
+  every section present, including a **Risk classification** — the highest
+  applicable tier, never lower, named against the repository's risk-tier
+  scale (`docs/risk-tiers.md` where it has one; otherwise core ADR-0019's
+  four tiers) — with a one-line rationale, and Checks/Verification
+  items ticked only when you actually ran them (paste the command's tail;
+  never claim a check you did not run). A repository with no template still
+  gets a Summary / Verification / Risk tier body. A missing section blocks in
+  review as a description-only `contract:pr-body:` finding that routes to a
+  human to cure (ADR-0067) instead of you, costing a review round for no
+  code reason — fill it in up front.
 
 ## Cure a pull request (`pr-cure`)
 
