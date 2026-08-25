@@ -1404,7 +1404,11 @@ func openConsoleTestManager(t *testing.T, nodeID, ttydPath string, environment f
 				return "/tools/" + name, nil
 			}
 		},
-		Environment: environment,
+		Environment: func() []string {
+			// Launch requires the worker MCP endpoint and token in the node
+			// environment; supply test values regardless of the host's.
+			return append(environment(), "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret")
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
