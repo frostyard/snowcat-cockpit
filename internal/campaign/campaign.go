@@ -78,7 +78,10 @@ type launchProbe struct {
 	repository string
 	role       queueview.Role
 	stabilized bool
+	claimed    bool
 }
+
+var launchableRoles = []queueview.Role{queueview.RoleDiscoverer, queueview.RoleImplementer, queueview.RoleReviewer}
 
 type workerExit struct {
 	workerID string
@@ -491,6 +494,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		}
 	}
 	exits := controller.inspectLaunchProbes(workers)
+	controller.confirmPendingClaims(ctx, exits)
 
 	type observation struct {
 		repository managedrepo.Record
@@ -535,6 +539,25 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 	}
 	pendingFailures := controller.reconcileWorkerExits(ctx, exits)
 	controller.sweepCleanupCandidates(ctx)
+	// Resolved after reconcileWorkerExits so a probe that this same tick
+	// confirmed exited (claimed or otherwise) no longer reserves its slot.
+	pendingClaims := controller.pendingLaunchCounts()
+	for repository, observed := range byRepository {
+		if observed.err != nil {
+			continue
+		}
+		for _, role := range launchableRoles {
+			reserved := pendingClaims[laneFailureKey(repository, role)]
+			if reserved <= 0 {
+				continue
+			}
+			if observed.snapshot.Counts[role] > reserved {
+				observed.snapshot.Counts[role] -= reserved
+			} else {
+				observed.snapshot.Counts[role] = 0
+			}
+		}
+	}
 	laneFailures := append(controller.activeLaneFailures(), pendingFailures...)
 	sort.Slice(laneFailures, func(i, j int) bool {
 		if laneFailures[i].repository == laneFailures[j].repository {
@@ -551,7 +574,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		})
 	}
 
-	roles := []queueview.Role{queueview.RoleDiscoverer, queueview.RoleImplementer, queueview.RoleReviewer}
+	roles := launchableRoles
 	eligibleByRole := make(map[queueview.Role]int, len(roles))
 	providerEligible := make(map[string]bool)
 	for _, role := range roles {
@@ -817,6 +840,64 @@ func (controller *Controller) recordCleanup() {
 	controller.record.LastCleanupAt = now
 	controller.record.UpdatedAt = now
 	_ = controller.write(controller.record)
+}
+
+// confirmPendingClaims checks whether a stabilized (running) launch probe has
+// made its first Snowcat attempt yet, without waiting for it to exit. Once
+// confirmed, pendingLaunchCounts stops reserving its (repository, role) slot,
+// so the lane relies on Snowcat's own claimable count again (ADR-0010-adjacent
+// launch-to-claim gap: issue #17).
+func (controller *Controller) confirmPendingClaims(ctx context.Context, exited []workerExit) {
+	skip := make(map[string]bool, len(exited))
+	for _, exit := range exited {
+		skip[exit.workerID] = true
+	}
+	controller.mu.Lock()
+	type pendingProbe struct {
+		workerID string
+		probe    launchProbe
+	}
+	pending := make([]pendingProbe, 0)
+	for workerID, probe := range controller.probes {
+		if probe.claimed || !probe.stabilized || skip[workerID] {
+			continue
+		}
+		pending = append(pending, pendingProbe{workerID, probe})
+	}
+	controller.mu.Unlock()
+	sort.Slice(pending, func(i, j int) bool { return pending[i].workerID < pending[j].workerID })
+	for _, entry := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		observed, err := controller.queue.ObserveWorker(ctx, entry.probe.repository, entry.workerID)
+		if err != nil || observed.Status == "unmatched" {
+			continue
+		}
+		controller.mu.Lock()
+		if probe, exists := controller.probes[entry.workerID]; exists {
+			probe.claimed = true
+			controller.probes[entry.workerID] = probe
+		}
+		controller.mu.Unlock()
+	}
+}
+
+// pendingLaunchCounts reports, per repository and role, how many live launch
+// probes are still waiting on their first Snowcat claim. reconcile subtracts
+// these from the freshly observed claimable count so a lane does not launch a
+// second worker into the gap between a worker starting and it calling
+// claim_work for the one item that made it eligible.
+func (controller *Controller) pendingLaunchCounts() map[string]int {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	counts := make(map[string]int, len(controller.probes))
+	for _, probe := range controller.probes {
+		if probe.stabilized && !probe.claimed {
+			counts[laneFailureKey(probe.repository, probe.role)]++
+		}
+	}
+	return counts
 }
 
 func (controller *Controller) failLane(probe launchProbe, detail string) {

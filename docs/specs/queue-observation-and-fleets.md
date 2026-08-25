@@ -24,20 +24,25 @@ tools.
 
 ## Local launch wrapper
 
-`bin/snowcat-cockpit-serve [serve options]` MUST:
+`bin/snowcat-cockpit-serve [serve options]` MUST read two separate credential
+files, one for queue observation and one for worker MCP access:
 
-- read `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env`, unless a
-  test supplies `SNOWCAT_COCKPIT_OBSERVER_ENV`;
-- require a regular, non-symlink credential file owned by the current user
-  with mode `0600`;
-- parse only one literal `export SNOWCAT_OBSERVER_TOKEN=<token>` declaration
-  and MUST NOT evaluate the file as shell code;
+- read `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env`, unless
+  a test supplies `SNOWCAT_COCKPIT_OBSERVER_ENV`, and parse only one literal
+  `export SNOWCAT_OBSERVER_TOKEN=<token>` declaration from it;
+- read `${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/mcp-token.env`, unless a
+  test supplies `SNOWCAT_COCKPIT_WORKER_ENV`, and parse only one literal
+  `export SNOWCAT_MCP_TOKEN=<token>` declaration from it;
+- require each credential file to be a regular, non-symlink file owned by the
+  current user with mode `0600`, and MUST NOT evaluate either file as shell
+  code;
 - set `SNOWCAT_COCKPIT_MCP_URL` to
   `https://snowcat.goat-snake.ts.net/mcp`;
 - set worker-local `SNOWCAT_MCP_URL` to the same fixed endpoint without copying
   its value into an argument or file;
-- map the value to `SNOWCAT_COCKPIT_MCP_TOKEN`, remove
-  `SNOWCAT_OBSERVER_TOKEN`, and use `exec` with preserved argument boundaries;
+- map the observer token to `SNOWCAT_COCKPIT_MCP_TOKEN` and the worker token to
+  `SNOWCAT_MCP_TOKEN`, remove `SNOWCAT_OBSERVER_TOKEN`, and use `exec` with
+  preserved argument boundaries;
 - run `dist/snowcat-cockpit serve`, unless a test supplies
   `SNOWCAT_COCKPIT_BIN`.
 
