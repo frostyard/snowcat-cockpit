@@ -65,6 +65,32 @@ func RoleSelection(role Role) string {
 	}
 }
 
+// ImplementerExclusionPrompt describes, in prose, every classification rule
+// that routes a kind away from the implementer role before its fallback
+// rule. It is the single source the implementer worker prompt must quote so
+// the prompt's claimable-kind exclusions can never drift from the
+// classifier the campaign controller uses to count claimable work per lane.
+func ImplementerExclusionPrompt() string {
+	var suffixes []string
+	var exactKinds []string
+	for _, rule := range classificationRules {
+		if rule.Role == RoleImplementer {
+			continue
+		}
+		switch rule.Match {
+		case MatchSuffix:
+			suffixes = append(suffixes, "kinds ending in "+rule.Suffix)
+		case MatchExact:
+			exactKinds = append(exactKinds, rule.ExactKinds...)
+		}
+	}
+	parts := append([]string(nil), suffixes...)
+	if len(exactKinds) > 0 {
+		parts = append(parts, "exact "+strings.Join(exactKinds, " and "))
+	}
+	return strings.Join(parts, " and ")
+}
+
 func Classify(kind string) Role {
 	for _, rule := range classificationRules {
 		switch rule.Match {
