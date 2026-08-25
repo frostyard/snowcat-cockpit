@@ -1041,13 +1041,13 @@ func TestBuildPromptPinsRoleSelections(t *testing.T) {
 		}
 	}
 	implementer := BuildPrompt("worker-1234567890abcdef", "implementer", "frostyard/firn")
-	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery and exact pr-review and release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix, pr-cure, pr-cure-change", "worker target", "cure.pullRequestUrl", "review.pullRequestUrl", "refuses a moved head", "push-target", "never use ordinary git push", "do not create, rename, or switch branches", "write and open-pr in allowedActions", "requiredArtifact pull-request", "Never infer write authority from open-pr", "without a second permission prompt", "do not request a front-loaded lease", "SNOWCAT_COCKPIT_LEASE_LOST", "whether complete_work was attempted", "at most one"} {
+	for _, expected := range []string{"work-snowcat-queue", "list queued work once and claimed work once", "newest attempt outcome is expired", "excluding kinds ending in -discovery and exact pr-review and release-needed", "Do not use a fixed implementation-kind whitelist", "issue-resolution", "pr-review-fix, pr-cure, pr-cure-change", "worker target", "cure.pullRequestUrl", "review.pullRequestUrl", "refuses a moved head", "merged or closed, call block_work", "do not retry it from other directories", "push-target", "never use ordinary git push", "do not create, rename, or switch branches", "write and open-pr in allowedActions", "requiredArtifact pull-request", "Never infer write authority from open-pr", "without a second permission prompt", "do not request a front-loaded lease", "SNOWCAT_COCKPIT_LEASE_LOST", "whether complete_work was attempted", "at most one"} {
 		if !strings.Contains(implementer, expected) {
 			t.Fatalf("implementer prompt missing %q: %s", expected, implementer)
 		}
 	}
 	reviewer := BuildPrompt("worker-1234567890abcdef", "reviewer", "frostyard/firn")
-	for _, expected := range []string{"review-snowcat-queue", "only pr-review", "bounds claims to 120 seconds", "worker target", "exact bound head detached", "release the item", "result.artifacts and followUps as empty arrays ([])", "tool schema requires both"} {
+	for _, expected := range []string{"review-snowcat-queue", "only pr-review", "bounds claims to 120 seconds", "worker target", "exact bound head detached", "release the item", "merged or closed, call block_work", "result.artifacts and followUps as empty arrays ([])", "tool schema requires both"} {
 		if !strings.Contains(reviewer, expected) {
 			t.Fatalf("reviewer prompt missing %q: %s", expected, reviewer)
 		}

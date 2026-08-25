@@ -19,6 +19,9 @@ type targetRunner struct {
 	headRepository string
 	currentBranch  string
 	currentHead    string
+	state          string
+	merged         bool
+	fetchError     string
 	commands       []Command
 }
 
@@ -33,13 +36,20 @@ func (runner *targetRunner) Run(_ context.Context, command Command) ([]byte, err
 	case arguments == "branch\x00--show-current":
 		return []byte(runner.currentBranch + "\n"), nil
 	case strings.HasPrefix(arguments, "api\x00repos/"):
-		payload, err := json.Marshal(map[string]any{"head": map[string]any{
+		state := runner.state
+		if state == "" {
+			state = "open"
+		}
+		payload, err := json.Marshal(map[string]any{"state": state, "merged": runner.merged, "head": map[string]any{
 			"sha": runner.apiHead, "ref": runner.headRef, "repo": map[string]string{"full_name": runner.headRepository},
 		}})
 		return payload, err
 	case strings.HasPrefix(arguments, "check-ref-format\x00--branch\x00"):
 		return nil, nil
 	case strings.HasPrefix(arguments, "fetch\x00--no-tags\x00--force"):
+		if runner.fetchError != "" {
+			return []byte(runner.fetchError + "\n"), errors.New("exit status 128")
+		}
 		return nil, nil
 	case strings.HasPrefix(arguments, "rev-parse\x00--verify\x00refs/cockpit/targets/"):
 		return []byte(runner.fetchedHead + "\n"), nil
@@ -167,5 +177,70 @@ func TestPrepareReviewTargetChecksOutDetachedExactHead(t *testing.T) {
 	}
 	if target.Mode != TargetModeDetached || target.LocalBranch != "" || runner.currentBranch != "" || runner.currentHead != head {
 		t.Fatalf("target = %#v; runner = %#v", target, runner)
+	}
+}
+
+func TestPrepareTargetRefusesMergedOrClosedPullRequestBeforeFetch(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name   string
+		state  string
+		merged bool
+		want   string
+	}{
+		{name: "merged", state: "closed", merged: true, want: "is merged"},
+		{name: "closed", state: "closed", want: "is closed"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			workspace := t.TempDir()
+			if err := os.Mkdir(filepath.Join(workspace, ".agents"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			workerID := "worker-fedcba9876543210"
+			runner := &targetRunner{
+				workspace: workspace, apiHead: strings.Repeat("a", 40), fetchedHead: strings.Repeat("a", 40),
+				headRef: "cockpit/worker-0123456789abcdef", headRepository: "frostyard/firn", currentBranch: "cockpit/" + workerID,
+				state: testCase.state, merged: testCase.merged,
+			}
+			_, err := PrepareTarget(context.Background(), TargetRequest{
+				WorkerID: workerID, Repository: "frostyard/firn",
+				ItemID: "fedcba98-7654-3210-fedc-ba9876543210", Kind: "pr-review-fix",
+				PullRequestURL: "https://github.com/frostyard/firn/pull/7", HeadSHA: strings.Repeat("a", 40),
+			}, workspace, runner, func(name string) (string, error) { return "/tools/" + name, nil })
+			if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v", err)
+			}
+			for _, command := range runner.commands {
+				if slices.Contains(command.Arguments, "fetch") {
+					t.Fatalf("%s pull request head was fetched: %#v", testCase.name, command.Arguments)
+				}
+			}
+			if _, exists, _ := readTarget(workspace); exists {
+				t.Fatalf("%s pull request recorded a target", testCase.name)
+			}
+		})
+	}
+}
+
+func TestPrepareTargetReportsFetchFailureDetail(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workspace, ".agents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workerID := "worker-fedcba9876543210"
+	runner := &targetRunner{
+		workspace: workspace, apiHead: strings.Repeat("a", 40), fetchedHead: strings.Repeat("a", 40),
+		headRef: "cockpit/worker-0123456789abcdef", headRepository: "frostyard/firn", currentBranch: "cockpit/" + workerID,
+		fetchError: "fatal: couldn't find remote ref refs/heads/cockpit/worker-0123456789abcdef",
+	}
+	_, err := PrepareTarget(context.Background(), TargetRequest{
+		WorkerID: workerID, Repository: "frostyard/firn",
+		ItemID: "fedcba98-7654-3210-fedc-ba9876543210", Kind: "pr-review-fix",
+		PullRequestURL: "https://github.com/frostyard/firn/pull/7", HeadSHA: strings.Repeat("a", 40),
+	}, workspace, runner, func(name string) (string, error) { return "/tools/" + name, nil })
+	if err == nil || !strings.Contains(err.Error(), "couldn't find remote ref") || !strings.Contains(err.Error(), "cockpit/worker-0123456789abcdef from frostyard/firn") {
+		t.Fatalf("error = %v", err)
 	}
 }

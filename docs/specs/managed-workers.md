@@ -133,7 +133,13 @@ HTTP operations:
    the claimed item's exact non-secret ID, kind, pull-request URL, and bound
    head before inspecting or changing the tree. `pr-cure-change` resolves the
    binding from its root `pr-cure` item. Missing metadata or a moved head MUST
-   cause release without substantive work. Review targets MUST be detached at
+   cause release without substantive work. `worker target` MUST inspect the
+   bound pull request's state before fetching and refuse a merged or closed
+   pull request with that reason; the worker MUST then `block_work` with the
+   same reason rather than release, because no later worker can deliver it.
+   A failed fetch MUST name the head branch, its repository, and the last
+   line of Git's output so the refusal is diagnosable without retrying the
+   helper elsewhere. Review targets MUST be detached at
    the exact head. Writable targets MUST keep the unique local Cockpit branch
    but reset it to the exact bound head; every push MUST use `worker
    push-target`, which rechecks GitHub and uses an exact force-with-lease
