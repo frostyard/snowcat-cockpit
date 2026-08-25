@@ -471,6 +471,57 @@ func TestCampaignDoesNotBackOffWorkerAfterLaunchStabilizes(t *testing.T) {
 	}
 }
 
+func TestCampaignDoesNotRelaunchIntoTheSameStillQueuedItem(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/updex", Source: "/sources/updex", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	workerID := "worker-0000000000000001"
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
+		// Snowcat keeps reporting this one queued item on every observation
+		// until worker-0000000000000001 actually calls claim_work.
+		repository.Repository: {queueview.RoleReviewer: 1},
+	}}
+	workers := &fakeWorkers{launchStatus: worker.StatusRunning}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, workers)
+	controller.record.Request = validRequest()
+	controller.record.Request.Reviewer.Capacity = 2
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	// Tick 1 launches the only worker the single queued item justifies.
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	// Ticks 2 and 3: the launched worker is running but has not yet claimed
+	// anything (the launch-to-claim gap, frostyard/snowcat-cockpit#17), so
+	// Snowcat still reports the same one item as claimable. Spare capacity
+	// (2) MUST NOT relaunch into it a second time.
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	workers.mu.Lock()
+	if len(workers.launched) != 1 {
+		workers.mu.Unlock()
+		t.Fatalf("launches = %d, want exactly one worker for the one still-queued item", len(workers.launched))
+	}
+	workers.mu.Unlock()
+
+	// Once the worker's attempt is confirmed, spare capacity is free again
+	// for genuinely new work.
+	queue.mu.Lock()
+	queue.attempts = map[string]queueview.WorkerObservation{
+		workerID: {WorkerID: workerID, Repository: repository.Repository, Status: "claimed", Detail: "Snowcat reports an active lease for this worker"},
+	}
+	queue.counts[repository.Repository] = map[queueview.Role]int{queueview.RoleReviewer: 1}
+	queue.mu.Unlock()
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if len(workers.launched) != 2 {
+		t.Fatalf("launches = %d, want a second launch once the first worker's claim is confirmed and a new item remains", len(workers.launched))
+	}
+}
+
 func TestCampaignFailsStableLaneWhenProviderExitsWithClaimedAttempt(t *testing.T) {
 	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	workerID := "worker-0000000000000001"
@@ -517,8 +568,8 @@ func TestCampaignFailsStableLaneWhenProviderExitsWithClaimedAttempt(t *testing.T
 	}
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
-	if len(queue.attemptCalls) != 1 {
-		t.Fatalf("attempt observations = %q, want one", queue.attemptCalls)
+	if len(queue.attemptCalls) != 2 {
+		t.Fatalf("attempt observations = %q, want one pending-claim confirmation plus one exit outcome", queue.attemptCalls)
 	}
 }
 

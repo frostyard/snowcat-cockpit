@@ -267,6 +267,22 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestImplementerExclusionPromptMatchesClassificationRules(t *testing.T) {
+	t.Parallel()
+	if got, want := ImplementerExclusionPrompt(), "kinds ending in -discovery and exact pr-review and release-needed"; got != want {
+		t.Fatalf("ImplementerExclusionPrompt() = %q, want %q", got, want)
+	}
+	for kind, role := range map[string]Role{
+		"docs-drift-discovery": RoleDiscoverer,
+		"pr-review":            RoleReviewer,
+		"release-needed":       RoleUnassigned,
+	} {
+		if Classify(kind) != role {
+			t.Fatalf("Classify(%q) = %q, want %q; ImplementerExclusionPrompt fixture is stale", kind, Classify(kind), role)
+		}
+	}
+}
+
 func TestHTTPObserverValidatesConfigurationAndRepository(t *testing.T) {
 	t.Parallel()
 	for _, config := range []HTTPConfig{
