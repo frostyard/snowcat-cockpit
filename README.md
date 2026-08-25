@@ -83,10 +83,16 @@ press **Observe work** for one retained worker. A one-shot fleet is capped to
 eligible work and 12 workers and never refills. An explicitly started board
 campaign is the bounded persistent exception described below.
 
-For the standard local observer file at
-`~/.config/snowcat/profile-observer.env`, build once and use the checked-in
-wrapper. It verifies mode `0600`, reads only the expected export, fixes the MCP
-URL to `https://snowcat.goat-snake.ts.net/mcp`, and removes the source variable
+For the standard local credential files at
+`${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env` (one
+`export SNOWCAT_OBSERVER_TOKEN=<token>`) and
+`${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/mcp-token.env` (one
+`export SNOWCAT_MCP_TOKEN=<token>`), build once and use the checked-in
+wrapper. Override either path with `SNOWCAT_COCKPIT_OBSERVER_ENV` and
+`SNOWCAT_COCKPIT_WORKER_ENV` respectively. Both files must be regular,
+non-symlink, current-user-owned files with mode `0600`. The wrapper verifies
+both files, reads only their expected export, fixes the MCP URL to
+`https://snowcat.goat-snake.ts.net/mcp`, and removes the source variables
 before starting Cockpit:
 
 ```bash
