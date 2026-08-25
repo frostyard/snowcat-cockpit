@@ -59,7 +59,9 @@ type PushResult struct {
 }
 
 type pullRequestProjection struct {
-	Head struct {
+	State  string `json:"state"`
+	Merged bool   `json:"merged"`
+	Head   struct {
 		Ref  string `json:"ref"`
 		SHA  string `json:"sha"`
 		Repo *struct {
@@ -103,6 +105,12 @@ func PrepareTarget(ctx context.Context, request TargetRequest, directory string,
 	if err != nil {
 		return Target{}, err
 	}
+	if pull.Merged {
+		return Target{}, fmt.Errorf("%w: bound pull request is merged; nothing can be delivered and its head branch may no longer exist", ErrConflict)
+	}
+	if state := strings.ToLower(pull.State); state != "open" {
+		return Target{}, fmt.Errorf("%w: bound pull request is %s; nothing can be delivered", ErrConflict, state)
+	}
 	if strings.ToLower(pull.Head.SHA) != request.HeadSHA {
 		return Target{}, fmt.Errorf("%w: pull-request head moved from %s to %s", ErrConflict, shortHead(request.HeadSHA), shortHead(pull.Head.SHA))
 	}
@@ -119,8 +127,11 @@ func PrepareTarget(ctx context.Context, request TargetRequest, directory string,
 	targetURL := "https://github.com/" + targetRepository + ".git"
 	fetchedRef := "refs/cockpit/targets/" + request.WorkerID
 	refspec := "+refs/heads/" + pull.Head.Ref + ":" + fetchedRef
-	if _, err := runCommand(ctx, runner, gitPath, workspace, "fetch", "--no-tags", "--force", targetURL, refspec); err != nil {
-		return Target{}, fmt.Errorf("fetch bound pull-request head: %w", err)
+	if output, err := runCommand(ctx, runner, gitPath, workspace, "fetch", "--no-tags", "--force", targetURL, refspec); err != nil {
+		if detail := commandDetail(output); detail != "" {
+			return Target{}, fmt.Errorf("fetch bound pull-request head %s from %s: %w: %s", pull.Head.Ref, targetRepository, err, detail)
+		}
+		return Target{}, fmt.Errorf("fetch bound pull-request head %s from %s: %w", pull.Head.Ref, targetRepository, err)
 	}
 	output, err := runCommand(ctx, runner, gitPath, workspace, "rev-parse", "--verify", fetchedRef+"^{commit}")
 	if err != nil {
@@ -248,7 +259,7 @@ func targetTools(ctx context.Context, directory string, runner Runner, lookPath 
 func inspectPullRequest(ctx context.Context, runner Runner, ghPath, workspace, repository string, number int) (pullRequestProjection, error) {
 	output, err := runCommand(ctx, runner, ghPath, workspace,
 		"api", "repos/"+repository+"/pulls/"+strconv.Itoa(number),
-		"--jq", `{head:{sha:.head.sha,ref:.head.ref,repo:{full_name:.head.repo.full_name}}}`,
+		"--jq", `{state:.state,merged:.merged,head:{sha:.head.sha,ref:.head.ref,repo:{full_name:.head.repo.full_name}}}`,
 	)
 	if err != nil {
 		return pullRequestProjection{}, fmt.Errorf("inspect bound pull request: %w", err)
@@ -410,6 +421,23 @@ func writeTarget(workspace string, target Target) error {
 
 func runCommand(ctx context.Context, runner Runner, name, directory string, arguments ...string) ([]byte, error) {
 	return runner.Run(ctx, Command{Name: name, Arguments: arguments, Directory: directory, Env: os.Environ()})
+}
+
+// commandDetail returns the last non-empty output line of a failed Git command,
+// bounded so a worker sees why a fetch failed without a wall of output.
+func commandDetail(output []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		if line == "" {
+			continue
+		}
+		if len(line) > 200 {
+			line = line[:200]
+		}
+		return line
+	}
+	return ""
 }
 
 func shortHead(head string) string {
