@@ -107,6 +107,8 @@ type fakeWorkers struct {
 	launched     []worker.LaunchRequest
 	records      []worker.Record
 	launchStatus string
+	cleaned      []string
+	cleanupErr   error
 }
 
 func (workers *fakeWorkers) List(context.Context) ([]worker.Record, error) {
@@ -129,6 +131,16 @@ func (workers *fakeWorkers) Launch(_ context.Context, request worker.LaunchReque
 		workers.records = append(workers.records, record)
 	}
 	return record, nil
+}
+
+func (workers *fakeWorkers) Cleanup(_ context.Context, workerID string, _ worker.CleanupOptions) (worker.Record, error) {
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if workers.cleanupErr != nil {
+		return worker.Record{}, workers.cleanupErr
+	}
+	workers.cleaned = append(workers.cleaned, workerID)
+	return worker.Record{ID: workerID, Status: worker.StatusCleaned}, nil
 }
 
 func TestCampaignLaunchesAcrossEveryEnrolledRepositoryAndLane(t *testing.T) {
@@ -573,6 +585,176 @@ func TestCampaignPausesLaneUntilExitedWorkerOutcomeCanBeObserved(t *testing.T) {
 	defer workers.mu.Unlock()
 	if len(workers.launched) != 2 {
 		t.Fatalf("launches = %d, want refill after terminal outcome", len(workers.launched))
+	}
+}
+
+func TestCampaignMarksCleanupCandidateAfterTerminalWorkerExit(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: strings.Repeat("a", 40)}
+	workerID := "worker-0000000000000001"
+	queue := &fakeQueue{
+		counts: map[string]map[queueview.Role]int{
+			repository.Repository: {queueview.RoleReviewer: 1},
+		},
+		attempts: map[string]queueview.WorkerObservation{
+			workerID: {WorkerID: workerID, Repository: repository.Repository, Status: "completed", Detail: "Snowcat reports this worker attempt as completed"},
+		},
+	}
+	workers := &fakeWorkers{launchStatus: worker.StatusRunning}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, workers)
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	workers.mu.Lock()
+	workers.records[0].Status = worker.StatusExited
+	workers.mu.Unlock()
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	controller.mu.Lock()
+	_, isCandidate := controller.cleanupCandidates[workerID]
+	controller.mu.Unlock()
+	if !isCandidate {
+		t.Fatal("terminal worker exit was not marked a cleanup candidate")
+	}
+}
+
+func TestCampaignDoesNotMarkCleanupCandidateOnFailedExit(t *testing.T) {
+	repository := managedrepo.Record{Repository: "frostyard/firn", Source: "/sources/firn", BaseCommit: strings.Repeat("a", 40)}
+	workerID := "worker-0000000000000001"
+	queue := &fakeQueue{
+		counts: map[string]map[queueview.Role]int{
+			repository.Repository: {queueview.RoleReviewer: 1},
+		},
+	}
+	workers := &fakeWorkers{launchStatus: worker.StatusRunning}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, queue, workers)
+	controller.record.Request = validRequest()
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+	workers.mu.Lock()
+	workers.records[0].Status = worker.StatusFailed
+	workers.mu.Unlock()
+	controller.reconcile(context.Background(), []managedrepo.Record{repository}, expiries)
+
+	controller.mu.Lock()
+	_, isCandidate := controller.cleanupCandidates[workerID]
+	controller.mu.Unlock()
+	if isCandidate {
+		t.Fatal("failed worker exit must stay retained exactly as before, not become a cleanup candidate")
+	}
+}
+
+func TestSweepCleanupCandidatesEnforcesCountRetention(t *testing.T) {
+	workers := &fakeWorkers{}
+	controller, err := New(Config{
+		StateDirectory: t.TempDir(), Repositories: &fakeRepositories{}, Preflights: &fakePreflights{},
+		Queue: &fakeQueue{counts: map[string]map[queueview.Role]int{}}, Workers: workers,
+		RetainWorkspaces: RetentionPolicy{Count: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.cleanupCandidates = map[string]time.Time{
+		"worker-old": time.Now().Add(-time.Hour),
+		"worker-new": time.Now(),
+	}
+
+	controller.sweepCleanupCandidates(context.Background())
+
+	workers.mu.Lock()
+	cleaned := append([]string(nil), workers.cleaned...)
+	workers.mu.Unlock()
+	if len(cleaned) != 1 || cleaned[0] != "worker-old" {
+		t.Fatalf("cleaned = %#v, want only the candidate beyond the retained count", cleaned)
+	}
+	if _, stillTracked := controller.cleanupCandidates["worker-new"]; !stillTracked {
+		t.Fatal("newest candidate within the retention count was dropped from tracking")
+	}
+	if _, stillTracked := controller.cleanupCandidates["worker-old"]; stillTracked {
+		t.Fatal("cleaned candidate was not removed from tracking")
+	}
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.WorkspacesCleaned != 1 || record.LastCleanupAt.IsZero() {
+		t.Fatalf("record = %#v, want one cleaned workspace reported", record)
+	}
+}
+
+func TestSweepCleanupCandidatesEnforcesAgeRetention(t *testing.T) {
+	workers := &fakeWorkers{}
+	controller, err := New(Config{
+		StateDirectory: t.TempDir(), Repositories: &fakeRepositories{}, Preflights: &fakePreflights{},
+		Queue: &fakeQueue{counts: map[string]map[queueview.Role]int{}}, Workers: workers,
+		RetainWorkspaces: RetentionPolicy{Age: time.Hour},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.cleanupCandidates = map[string]time.Time{
+		"worker-old": time.Now().Add(-2 * time.Hour),
+		"worker-new": time.Now(),
+	}
+
+	controller.sweepCleanupCandidates(context.Background())
+
+	workers.mu.Lock()
+	cleaned := append([]string(nil), workers.cleaned...)
+	workers.mu.Unlock()
+	if len(cleaned) != 1 || cleaned[0] != "worker-old" {
+		t.Fatalf("cleaned = %#v, want only the candidate older than the retention age", cleaned)
+	}
+}
+
+func TestSweepCleanupCandidatesRetainsOnCleanupFailure(t *testing.T) {
+	workers := &fakeWorkers{cleanupErr: errors.New("workspace has uncommitted or untracked changes")}
+	controller, err := New(Config{
+		StateDirectory: t.TempDir(), Repositories: &fakeRepositories{}, Preflights: &fakePreflights{},
+		Queue: &fakeQueue{counts: map[string]map[queueview.Role]int{}}, Workers: workers,
+		RetainWorkspaces: RetentionPolicy{Age: time.Minute},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.cleanupCandidates = map[string]time.Time{"worker-dirty": time.Now().Add(-time.Hour)}
+
+	controller.sweepCleanupCandidates(context.Background())
+
+	if _, stillTracked := controller.cleanupCandidates["worker-dirty"]; !stillTracked {
+		t.Fatal("a failed Cleanup call must leave the workspace retained and tracked")
+	}
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.WorkspacesCleaned != 0 {
+		t.Fatalf("WorkspacesCleaned = %d, want 0 after a failed cleanup", record.WorkspacesCleaned)
+	}
+}
+
+func TestSweepCleanupCandidatesDisabledByDefault(t *testing.T) {
+	workers := &fakeWorkers{}
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, &fakeQueue{counts: map[string]map[queueview.Role]int{}}, workers)
+	controller.cleanupCandidates = map[string]time.Time{"worker-old": time.Now().Add(-24 * time.Hour)}
+
+	controller.sweepCleanupCandidates(context.Background())
+
+	workers.mu.Lock()
+	defer workers.mu.Unlock()
+	if len(workers.cleaned) != 0 {
+		t.Fatalf("cleaned = %#v, want no automatic cleanup without a configured retention policy", workers.cleaned)
 	}
 }
 

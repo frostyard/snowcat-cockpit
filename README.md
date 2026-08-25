@@ -121,7 +121,11 @@ files. It retains prior releases, node state, managed sources, worker terminals,
 and workspaces.
 
 Open `http://127.0.0.1:7682`. The node creates only a stable, non-secret ID
-under `${XDG_STATE_HOME:-$HOME/.local/state}/snowcat-cockpit`. It refuses a
+under `${XDG_STATE_HOME:-$HOME/.local/state}/snowcat-cockpit`. Retained worker
+workspaces live under that state directory too, so an explicit `--state-dir`
+override (or `$XDG_STATE_HOME`) MUST NOT resolve onto a tmpfs mount such as
+`/tmp`: a tmpfs both loses retained workspaces on reboot and can fill and fail
+tool output writes under sustained campaign load. It refuses a
 non-loopback listen address. A provider's launch control is enabled only while
 its live MCP receipt is current. Structural profile readiness verifies the
 canonical Snowcat skills byte-for-byte against the revision locked into
@@ -153,6 +157,14 @@ Snowcat's control-plane enrollment. Snowcat still decides claim eligibility.
 Campaign stop prevents new launches but never stops a worker or deletes a
 source, terminal, or workspace. On restart an interrupted campaign remains
 stopped until the operator explicitly starts it again.
+
+While a campaign runs, it cleans a worker's workspace automatically once
+nothing about it can still matter: its provider process exited (not `failed`)
+and its Snowcat attempt reached a terminal outcome or its lane found nothing
+to claim. `SNOWCAT_COCKPIT_RETAIN_WORKSPACES` bounds how many such workspaces
+accumulate before cleanup catches up — a non-negative integer count (default
+20) or a duration such as `6h`; a worker that failed, lost its lease, or left
+an unclean tree stays retained for explicit `worker cleanup` exactly as today.
 
 Use `serve --source-root <directory>` to place retained managed sources outside
 the state directory. No campaign configuration or state contains provider,

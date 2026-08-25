@@ -104,6 +104,11 @@ type Record struct {
 	StartedAt    time.Time          `json:"startedAt,omitempty"`
 	UpdatedAt    time.Time          `json:"updatedAt,omitempty"`
 	StoppedAt    *time.Time         `json:"stoppedAt,omitempty"`
+
+	// WorkspacesCleaned and LastCleanupAt report automatic cleanup of
+	// terminal worker workspaces performed by this campaign run.
+	WorkspacesCleaned int       `json:"workspacesCleaned,omitempty"`
+	LastCleanupAt     time.Time `json:"lastCleanupAt,omitempty"`
 }
 
 type PreflightResult struct {
@@ -124,6 +129,17 @@ type Preflighter interface {
 type WorkerManager interface {
 	List(context.Context) ([]worker.Record, error)
 	Launch(context.Context, worker.LaunchRequest) (worker.Record, error)
+	Cleanup(context.Context, string, worker.CleanupOptions) (worker.Record, error)
+}
+
+// RetentionPolicy bounds how many terminal, nothing-left-to-matter worker
+// workspaces the campaign controller keeps before cleaning them
+// automatically. Count and Age are mutually exclusive; a zero value for both
+// disables automatic cleanup, so an operator or test that never sets this
+// field sees no behavior change.
+type RetentionPolicy struct {
+	Count int
+	Age   time.Duration
 }
 
 type QueueObserver interface {
@@ -139,6 +155,10 @@ type Config struct {
 	Workers        WorkerManager
 	Now            func() time.Time
 	Random         func([]byte) (int, error)
+
+	// RetainWorkspaces bounds automatic cleanup of terminal worker
+	// workspaces. See RetentionPolicy.
+	RetainWorkspaces RetentionPolicy
 }
 
 type Controller struct {
@@ -150,13 +170,16 @@ type Controller struct {
 	now          func() time.Time
 	random       func([]byte) (int, error)
 
-	mu           sync.Mutex
-	record       Record
-	cancel       context.CancelFunc
-	done         chan struct{}
-	backoff      map[string]time.Time
-	probes       map[string]launchProbe
-	laneFailures map[string]laneFailure
+	retain RetentionPolicy
+
+	mu                sync.Mutex
+	record            Record
+	cancel            context.CancelFunc
+	done              chan struct{}
+	backoff           map[string]time.Time
+	probes            map[string]launchProbe
+	laneFailures      map[string]laneFailure
+	cleanupCandidates map[string]time.Time
 }
 
 func New(config Config) (*Controller, error) {
@@ -173,16 +196,18 @@ func New(config Config) (*Controller, error) {
 		return nil, fmt.Errorf("open board campaign state: %w", err)
 	}
 	controller := &Controller{
-		statePath:    filepath.Join(config.StateDirectory, "campaign.json"),
-		repositories: config.Repositories,
-		preflights:   config.Preflights,
-		queue:        config.Queue,
-		workers:      config.Workers,
-		now:          config.Now,
-		random:       config.Random,
-		backoff:      make(map[string]time.Time),
-		probes:       make(map[string]launchProbe),
-		laneFailures: make(map[string]laneFailure),
+		statePath:         filepath.Join(config.StateDirectory, "campaign.json"),
+		repositories:      config.Repositories,
+		preflights:        config.Preflights,
+		queue:             config.Queue,
+		workers:           config.Workers,
+		now:               config.Now,
+		random:            config.Random,
+		retain:            config.RetainWorkspaces,
+		backoff:           make(map[string]time.Time),
+		probes:            make(map[string]launchProbe),
+		laneFailures:      make(map[string]laneFailure),
+		cleanupCandidates: make(map[string]time.Time),
 	}
 	record, err := controller.read()
 	if err != nil {
@@ -244,6 +269,7 @@ func (controller *Controller) Start(ctx context.Context, request Request) (Recor
 	controller.backoff = make(map[string]time.Time)
 	controller.probes = make(map[string]launchProbe)
 	controller.laneFailures = make(map[string]laneFailure)
+	controller.cleanupCandidates = make(map[string]time.Time)
 	go controller.run(runContext)
 	return cloneRecord(controller.record), nil
 }
@@ -505,6 +531,7 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 		})
 	}
 	pendingFailures := controller.reconcileWorkerExits(ctx, exits)
+	controller.sweepCleanupCandidates(ctx)
 	laneFailures := append(controller.activeLaneFailures(), pendingFailures...)
 	sort.Slice(laneFailures, func(i, j int) bool {
 		if laneFailures[i].repository == laneFailures[j].repository {
@@ -676,12 +703,20 @@ func (controller *Controller) reconcileWorkerExits(ctx context.Context, exits []
 		switch observed.Status {
 		case "completed", "blocked", "released", "expired":
 			controller.removeLaunchProbe(exited.workerID)
+			if exited.status == worker.StatusExited {
+				controller.markCleanupCandidate(exited.workerID)
+			}
 		case "unmatched":
 			controller.removeLaunchProbe(exited.workerID)
 			if !exited.probe.stabilized {
 				controller.failLane(exited.probe, string(exited.probe.role)+" provider exited before launch stabilized; lane retry is backed off")
 			} else if exited.status == worker.StatusFailed {
 				controller.failLane(exited.probe, string(exited.probe.role)+" lane failed: retained worker terminal failed without a terminal Snowcat outcome; retry is backed off")
+			} else {
+				// The provider exited cleanly having stabilized but claimed
+				// nothing (the lane found nothing to claim) — nothing about
+				// this workspace can still matter.
+				controller.markCleanupCandidate(exited.workerID)
 			}
 		case "claimed":
 			controller.removeLaunchProbe(exited.workerID)
@@ -704,6 +739,81 @@ func (controller *Controller) removeLaunchProbe(workerID string) {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
 	delete(controller.probes, workerID)
+}
+
+// markCleanupCandidate records that a worker's workspace has nothing left
+// that can still matter (its provider process exited, and its item reached
+// a terminal Snowcat outcome or its lane found nothing to claim). It does
+// not clean the workspace itself; sweepCleanupCandidates enforces the
+// configured retention bound and performs the actual cleanup.
+func (controller *Controller) markCleanupCandidate(workerID string) {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if _, tracked := controller.cleanupCandidates[workerID]; !tracked {
+		controller.cleanupCandidates[workerID] = controller.now().UTC()
+	}
+}
+
+type cleanupCandidate struct {
+	workerID   string
+	eligibleAt time.Time
+}
+
+// sweepCleanupCandidates cleans workspaces that became cleanup candidates
+// and now exceed the configured retention bound (a count of the
+// newest-eligible candidates to keep, or a maximum age). A worker whose
+// Cleanup call fails (for example an unclean tree) is left retained and
+// reconsidered on the next reconcile tick, matching today's manual-cleanup
+// failure behavior.
+func (controller *Controller) sweepCleanupCandidates(ctx context.Context) {
+	policy := controller.retain
+	if policy.Count <= 0 && policy.Age <= 0 {
+		return
+	}
+	controller.mu.Lock()
+	candidates := make([]cleanupCandidate, 0, len(controller.cleanupCandidates))
+	for workerID, eligibleAt := range controller.cleanupCandidates {
+		candidates = append(candidates, cleanupCandidate{workerID: workerID, eligibleAt: eligibleAt})
+	}
+	controller.mu.Unlock()
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].eligibleAt.Before(candidates[j].eligibleAt) })
+
+	due := make([]string, 0, len(candidates))
+	if policy.Age > 0 {
+		cutoff := controller.now().UTC().Add(-policy.Age)
+		for _, candidate := range candidates {
+			if candidate.eligibleAt.Before(cutoff) {
+				due = append(due, candidate.workerID)
+			}
+		}
+	} else if len(candidates) > policy.Count {
+		for _, candidate := range candidates[:len(candidates)-policy.Count] {
+			due = append(due, candidate.workerID)
+		}
+	}
+
+	for _, workerID := range due {
+		if ctx.Err() != nil {
+			return
+		}
+		if _, err := controller.workers.Cleanup(ctx, workerID, worker.CleanupOptions{}); err != nil {
+			continue
+		}
+		controller.mu.Lock()
+		delete(controller.cleanupCandidates, workerID)
+		controller.mu.Unlock()
+		controller.recordCleanup()
+	}
+}
+
+func (controller *Controller) recordCleanup() {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	now := controller.now().UTC()
+	controller.record.WorkspacesCleaned++
+	controller.record.LastCleanupAt = now
+	controller.record.UpdatedAt = now
+	_ = controller.write(controller.record)
 }
 
 func (controller *Controller) failLane(probe launchProbe, detail string) {

@@ -135,6 +135,20 @@ execution-side signals do not infer a Snowcat work outcome.
     item, attempt, or derived outcome in campaign state.
 11. On node restart, a previously active durable record becomes `stopped` with
     an interrupted detail. The node MUST NOT resume launches automatically.
+12. A running campaign MAY invoke the [managed workers](managed-workers.md)
+    cleanup contract automatically, and only, for a worker whose provider
+    process exited (never one reported `failed`) and whose exact attempt
+    correlation reached a terminal Snowcat outcome or was an unmatched
+    stabilized worker (clause 7) — the same set that already permits lane
+    refill. This is a caller of the existing explicit cleanup contract, not a
+    change to it: an unclean tree or another cleanup refusal still leaves the
+    workspace retained, exactly as manual cleanup does today. The bound
+    operator sets with `SNOWCAT_COCKPIT_RETAIN_WORKSPACES` (a non-negative
+    integer count of the newest such workers to keep, or a duration such as
+    `6h`, defaulting to a count of 20) caps how many otherwise-eligible
+    workspaces accumulate before automatic cleanup catches up; a zero-value,
+    unconfigured bound disables automatic cleanup entirely. The campaign
+    record reports `workspacesCleaned` and `lastCleanupAt`.
 
 ## References
 

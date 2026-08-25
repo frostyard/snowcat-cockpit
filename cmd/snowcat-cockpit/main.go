@@ -950,6 +950,11 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configure Snowcat queue observation: %v\n", err)
 		return 1
 	}
+	retainWorkspaces, err := retainWorkspacesFromLookup(os.Getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "configure workspace retention: %v\n", err)
+		return 1
+	}
 	managedSourceRoot := *sourceRoot
 	if managedSourceRoot == "" {
 		managedSourceRoot = filepath.Join(*stateDirectory, "sources")
@@ -962,11 +967,12 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	var campaigns *campaign.Controller
 	if queueObserver != nil {
 		campaigns, err = campaign.New(campaign.Config{
-			StateDirectory: *stateDirectory,
-			Repositories:   repositories,
-			Preflights:     &campaignPreflighter{stateDirectory: *stateDirectory, skillsDirectory: *skillsDirectory, runner: preflight.OSRunner{}},
-			Queue:          queueObserver,
-			Workers:        workerManager,
+			StateDirectory:   *stateDirectory,
+			Repositories:     repositories,
+			Preflights:       &campaignPreflighter{stateDirectory: *stateDirectory, skillsDirectory: *skillsDirectory, runner: preflight.OSRunner{}},
+			Queue:            queueObserver,
+			Workers:          workerManager,
+			RetainWorkspaces: retainWorkspaces,
 		})
 		if err != nil {
 			fmt.Fprintf(stderr, "open board campaign controller: %v\n", err)
@@ -1105,6 +1111,32 @@ func queueObserverFromLookup(lookup func(string) string) (snowcatObserver, error
 		return nil, errors.New("SNOWCAT_COCKPIT_MCP_TOKEN is required when queue observation is configured")
 	}
 	return queueview.NewHTTPObserver(queueview.HTTPConfig{Endpoint: endpoint, Token: token})
+}
+
+// defaultRetainWorkspaces bounds automatic workspace cleanup when the
+// operator has not set SNOWCAT_COCKPIT_RETAIN_WORKSPACES: keep the newest
+// this many terminal worker workspaces and clean the rest automatically.
+const defaultRetainWorkspaces = 20
+
+func retainWorkspacesFromLookup(lookup func(string) string) (campaign.RetentionPolicy, error) {
+	value := lookup("SNOWCAT_COCKPIT_RETAIN_WORKSPACES")
+	if value == "" {
+		return campaign.RetentionPolicy{Count: defaultRetainWorkspaces}, nil
+	}
+	if count, err := strconv.Atoi(value); err == nil {
+		if count < 0 {
+			return campaign.RetentionPolicy{}, errors.New("SNOWCAT_COCKPIT_RETAIN_WORKSPACES count must not be negative")
+		}
+		return campaign.RetentionPolicy{Count: count}, nil
+	}
+	age, err := time.ParseDuration(value)
+	if err != nil {
+		return campaign.RetentionPolicy{}, fmt.Errorf("SNOWCAT_COCKPIT_RETAIN_WORKSPACES must be a non-negative integer count or a duration: %w", err)
+	}
+	if age < 0 {
+		return campaign.RetentionPolicy{}, errors.New("SNOWCAT_COCKPIT_RETAIN_WORKSPACES duration must not be negative")
+	}
+	return campaign.RetentionPolicy{Age: age}, nil
 }
 
 func loadProfileSnapshot(skillsDirectory, stateDirectory string) (profile.Snapshot, error) {
