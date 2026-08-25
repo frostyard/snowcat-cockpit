@@ -1327,3 +1327,146 @@ func TestCleanupOfALegacyRecordUsesTheCurrentLock(t *testing.T) {
 		t.Fatalf("legacy record cleanup: %#v, %v", cleaned, err)
 	}
 }
+
+// fakeTTYDSource stands in for the real ttyd binary in OpenConsole tests. It
+// accepts ttyd's own flags, then either exits nonzero before binding
+// (FAKE_TTYD_MODE=fail, exercising an early-exit console) or binds the given
+// loopback port and blocks (exercising a successful console).
+const fakeTTYDSource = `package main
+
+import (
+	"flag"
+	"fmt"
+	"net"
+	"os"
+	"time"
+)
+
+func main() {
+	port := flag.String("p", "", "port")
+	flag.String("i", "", "interface")
+	flag.Bool("W", false, "")
+	flag.Bool("O", false, "")
+	flag.String("m", "", "")
+	flag.Parse()
+	if os.Getenv("FAKE_TTYD_MODE") == "fail" {
+		fmt.Fprintln(os.Stderr, "fake ttyd: bind refused: address already in use")
+		os.Exit(1)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:"+*port)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer listener.Close()
+	time.Sleep(10 * time.Second)
+}
+`
+
+func buildFakeTTYD(t *testing.T) string {
+	t.Helper()
+	goPath, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain is not installed")
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "fakettyd.go")
+	if err := os.WriteFile(source, []byte(fakeTTYDSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "fakettyd")
+	command := exec.Command(goPath, "build", "-o", binary, source)
+	command.Env = os.Environ()
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build fake ttyd: %v: %s", err, output)
+	}
+	return binary
+}
+
+func openConsoleTestManager(t *testing.T, nodeID, ttydPath string, environment func() []string) (*Manager, Record) {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("c", 40)}
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: nodeID,
+		Runner: runner,
+		LookPath: func(name string) (string, error) {
+			switch name {
+			case "tmux":
+				return "/tools/tmux", nil
+			case "ttyd":
+				return ttydPath, nil
+			default:
+				return "/tools/" + name, nil
+			}
+		},
+		Environment: environment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{Provider: "codex", Role: "reviewer", Repository: "frostyard/firn", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager, record
+}
+
+func TestOpenConsoleClassifiesEarlyTTYDExitAsNotReady(t *testing.T) {
+	t.Parallel()
+
+	ttydPath := buildFakeTTYD(t)
+	manager, record := openConsoleTestManager(t, "node-console-not-ready", ttydPath, func() []string {
+		return append(os.Environ(), "FAKE_TTYD_MODE=fail")
+	})
+
+	started := time.Now()
+	_, err := manager.OpenConsole(context.Background(), record.ID)
+	elapsed := time.Since(started)
+	if !errors.Is(err, ErrNotReady) {
+		t.Fatalf("OpenConsole error = %v, want ErrNotReady", err)
+	}
+	if !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("OpenConsole error = %v, want the bounded ttyd diagnostic", err)
+	}
+	if elapsed >= 750*time.Millisecond {
+		t.Fatalf("OpenConsole took %v, want to return promptly on an early ttyd exit", elapsed)
+	}
+	manager.mutex.Lock()
+	_, tracked := manager.consoles[record.ID]
+	manager.mutex.Unlock()
+	if tracked {
+		t.Fatalf("OpenConsole left a console process tracked after ttyd exited")
+	}
+}
+
+func TestOpenConsoleSucceedsWhenTTYDBindsTheLoopbackPort(t *testing.T) {
+	t.Parallel()
+
+	ttydPath := buildFakeTTYD(t)
+	manager, record := openConsoleTestManager(t, "node-console-ready", ttydPath, func() []string { return os.Environ() })
+	t.Cleanup(func() {
+		manager.mutex.Lock()
+		manager.stopConsoleLocked(record.ID)
+		manager.mutex.Unlock()
+	})
+
+	console, err := manager.OpenConsole(context.Background(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if console.URL == "" {
+		t.Fatalf("console URL is empty")
+	}
+	second, err := manager.OpenConsole(context.Background(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.URL != console.URL {
+		t.Fatalf("reopening an already-open console changed its URL: %s != %s", second.URL, console.URL)
+	}
+}
