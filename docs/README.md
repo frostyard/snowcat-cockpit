@@ -28,6 +28,7 @@ in [org-adrs.md](org-adrs.md).
 - [0010 — Bind managed leases to worker liveness](adr/0010-bind-managed-leases-to-worker-liveness.md)
 - [0011 — Run the node as a systemd user service](adr/0011-run-the-node-as-a-systemd-user-service.md)
 - [0012 — Provision repository tools before the lease and derive node state from its sources](adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
+- [0013 — Converge the node from a declared configuration](adr/0013-converge-the-node-from-a-declared-configuration.md)
 
 ### Design
 
@@ -41,6 +42,7 @@ in [org-adrs.md](org-adrs.md).
 - [Launcher CLI](specs/launcher-cli.md)
 - [Node CLI and HTTP API](specs/node-api.md)
 - [Linux node user service](specs/node-service.md)
+- [Declared node configuration and `node up`](specs/node-up.md)
 - [Provider preflight](specs/provider-preflight.md)
 - [Managed workers](specs/managed-workers.md)
 - [Rootless OCI workers](specs/oci-workers.md)

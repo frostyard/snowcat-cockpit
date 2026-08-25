@@ -24,6 +24,7 @@ import (
 	"github.com/frostyard/snowcat-cockpit/internal/leaseproxy"
 	"github.com/frostyard/snowcat-cockpit/internal/managedrepo"
 	"github.com/frostyard/snowcat-cockpit/internal/nodeservice"
+	"github.com/frostyard/snowcat-cockpit/internal/nodeup"
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
 	"github.com/frostyard/snowcat-cockpit/internal/profile"
 	"github.com/frostyard/snowcat-cockpit/internal/queueview"
@@ -98,12 +99,15 @@ func runNode(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configure node service: %v\n", err)
 		return 1
 	}
+	if len(args) > 0 && args[0] == "up" {
+		return runNodeUp(args[1:], stdout, stderr, manager, os.Executable, os.LookupEnv, executeNodeUp)
+	}
 	return runNodeWithService(args, stdout, stderr, manager, os.Executable, os.LookupEnv)
 }
 
 func runNodeWithService(args []string, stdout, stderr io.Writer, service nodeService, executable func() (string, error), lookupEnv func(string) (string, bool)) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "node requires install, status, restart, or uninstall")
+		fmt.Fprintln(stderr, "node requires up, install, status, restart, or uninstall")
 		printNodeUsage(stderr)
 		return 2
 	}
@@ -217,6 +221,7 @@ func runNodeWithService(args []string, stdout, stderr io.Writer, service nodeSer
 
 func printNodeUsage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
+  snowcat-cockpit node up [--config <file>] [--dry-run] [--install-root <directory>] [--unit-dir <directory>] [--timeout <duration>] [--json]
   snowcat-cockpit node install [--listen <host:port>] [--state-dir <directory>] [--skills-dir <directory>] [--source-root <directory>] [--observer-env <file>] [--worker-env <file>] [--install-root <directory>] [--unit-dir <directory>] [--json]
   snowcat-cockpit node status [--install-root <directory>] [--unit-dir <directory>] [--json]
   snowcat-cockpit node restart [--install-root <directory>] [--unit-dir <directory>] [--json]
@@ -233,6 +238,9 @@ func writeNodeServiceResult(output io.Writer, result nodeservice.Result, jsonOut
 	}
 	fmt.Fprintln(output)
 	fmt.Fprintf(output, "Dashboard: %s\nRelease: %s\n", result.Install.DashboardURL, result.Install.Release)
+	if result.Install.ConfigPath != "" {
+		fmt.Fprintf(output, "Config: %s\n", result.Install.ConfigPath)
+	}
 	if result.Health != nil {
 		fmt.Fprintf(output, "Health: %s · version %s · node %s\n", result.Health.Status, result.Health.Version, result.Health.NodeID)
 	}
@@ -615,59 +623,18 @@ func runPreflightWithRunner(args []string, stdout, stderr io.Writer, runner pref
 		return 2
 	}
 
-	structural := profile.Inspect(*skillsDirectory)
-	var selected *profile.Provider
-	for index := range structural.Providers {
-		if structural.Providers[index].ID == *providerID {
-			selected = &structural.Providers[index]
-			break
-		}
-	}
-	if selected == nil || selected.Executable.Status != profile.StatusReady || selected.SkillKit.Status != profile.StatusReady {
-		fmt.Fprintf(stderr, "provider %s is not structurally ready; run profiles first\n", *providerID)
-		return 1
-	}
-	if _, err := state.Open(*stateDirectory); err != nil {
-		fmt.Fprintf(stderr, "open node state: %v\n", err)
-		return 1
-	}
-	workspace, err := os.MkdirTemp(*stateDirectory, ".preflight-")
-	if err != nil {
-		fmt.Fprintf(stderr, "create preflight workspace: %v\n", err)
-		return 1
-	}
-	defer func() { _ = os.RemoveAll(workspace) }()
-	for _, providerSkills := range []string{
-		filepath.Join(workspace, ".agents", "skills"),
-		filepath.Join(workspace, ".claude", "skills"),
-	} {
-		if _, err := profile.InstallKit(providerSkills); err != nil {
-			fmt.Fprintf(stderr, "seed preflight worker kit: %v\n", err)
-			return 1
-		}
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	checkedAt := time.Now().UTC()
-	result := preflight.Run(ctx, *providerID, *mcpServer, *repository, workspace, runner)
-	expiresAt := checkedAt
-	if result.Status == preflight.StatusReady {
-		expiresAt = checkedAt.Add(15 * time.Minute)
-	}
-	receipt := state.PreflightReceipt{
-		Provider:    result.Provider,
-		MCPServer:   *mcpServer,
-		Status:      result.Status,
-		Detail:      result.Detail,
-		CheckedAt:   checkedAt,
-		ExpiresAt:   expiresAt,
-		KitRevision: profile.LockedManifest().Source.Revision,
-	}
-	if err := state.WritePreflight(*stateDirectory, receipt); err != nil {
-		fmt.Fprintf(stderr, "write preflight receipt: %v\n", err)
+	receipt, label, err := executePreflight(ctx, preflightExecution{
+		Provider: *providerID, MCPServer: *mcpServer, Repository: *repository,
+		StateDirectory: *stateDirectory, SkillsDirectory: *skillsDirectory,
+	}, runner)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
+	result := preflight.Result{Provider: receipt.Provider, Status: receipt.Status, Detail: receipt.Detail}
+	expiresAt := receipt.ExpiresAt
 	if *jsonOutput {
 		output := struct {
 			Provider  string    `json:"provider"`
@@ -684,7 +651,7 @@ func runPreflightWithRunner(args []string, stdout, stderr io.Writer, runner pref
 			return 1
 		}
 	} else {
-		fmt.Fprintf(stdout, "%s Snowcat MCP preflight (%s): %s\n", selected.Label, *mcpServer, result.Status)
+		fmt.Fprintf(stdout, "%s Snowcat MCP preflight (%s): %s\n", label, *mcpServer, result.Status)
 		fmt.Fprintln(stdout, result.Detail)
 		if result.Status == preflight.StatusReady {
 			fmt.Fprintf(stdout, "Valid until: %s\n", expiresAt.Format(time.RFC3339))
@@ -694,6 +661,168 @@ func runPreflightWithRunner(args []string, stdout, stderr io.Writer, runner pref
 		return 1
 	}
 	return 0
+}
+
+type preflightExecution struct {
+	Provider        string
+	MCPServer       string
+	Repository      string
+	StateDirectory  string
+	SkillsDirectory string
+}
+
+// executePreflight is the single live-proof path shared by the preflight
+// command and node up: structural readiness, a private seeded workspace, the
+// provider run, and the receipt bound to the locked kit revision.
+func executePreflight(ctx context.Context, execution preflightExecution, runner preflight.Runner) (state.PreflightReceipt, string, error) {
+	structural := profile.Inspect(execution.SkillsDirectory)
+	var selected *profile.Provider
+	for index := range structural.Providers {
+		if structural.Providers[index].ID == execution.Provider {
+			selected = &structural.Providers[index]
+			break
+		}
+	}
+	if selected == nil || selected.Executable.Status != profile.StatusReady || selected.SkillKit.Status != profile.StatusReady {
+		return state.PreflightReceipt{}, "", fmt.Errorf("provider %s is not structurally ready; run profiles first", execution.Provider)
+	}
+	if _, err := state.Open(execution.StateDirectory); err != nil {
+		return state.PreflightReceipt{}, "", fmt.Errorf("open node state: %w", err)
+	}
+	workspace, err := os.MkdirTemp(execution.StateDirectory, ".preflight-")
+	if err != nil {
+		return state.PreflightReceipt{}, "", fmt.Errorf("create preflight workspace: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(workspace) }()
+	for _, providerSkills := range []string{
+		filepath.Join(workspace, ".agents", "skills"),
+		filepath.Join(workspace, ".claude", "skills"),
+	} {
+		if _, err := profile.InstallKit(providerSkills); err != nil {
+			return state.PreflightReceipt{}, "", fmt.Errorf("seed preflight worker kit: %w", err)
+		}
+	}
+	checkedAt := time.Now().UTC()
+	result := preflight.Run(ctx, execution.Provider, execution.MCPServer, execution.Repository, workspace, runner)
+	expiresAt := checkedAt
+	if result.Status == preflight.StatusReady {
+		expiresAt = checkedAt.Add(15 * time.Minute)
+	}
+	receipt := state.PreflightReceipt{
+		Provider:    result.Provider,
+		MCPServer:   execution.MCPServer,
+		Status:      result.Status,
+		Detail:      result.Detail,
+		CheckedAt:   checkedAt,
+		ExpiresAt:   expiresAt,
+		KitRevision: profile.LockedManifest().Source.Revision,
+	}
+	if err := state.WritePreflight(execution.StateDirectory, receipt); err != nil {
+		return state.PreflightReceipt{}, "", fmt.Errorf("write preflight receipt: %w", err)
+	}
+	return receipt, selected.Label, nil
+}
+
+type nodeUpService interface {
+	Install(context.Context, nodeservice.InstallRequest) (nodeservice.Result, error)
+	Status(context.Context, nodeservice.Paths) (nodeservice.Result, error)
+}
+
+type nodeUpExecutor func(context.Context, *nodeup.Runner) (nodeup.Result, error)
+
+func executeNodeUp(ctx context.Context, runner *nodeup.Runner) (nodeup.Result, error) {
+	return runner.Run(ctx)
+}
+
+func runNodeUp(args []string, stdout, stderr io.Writer, service nodeUpService, executable func() (string, error), lookupEnv func(string) (string, bool), execute nodeUpExecutor) int {
+	flags := flag.NewFlagSet("node up", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	configPath := flags.String("config", defaultNodeConfigPath(), "declared non-secret node configuration")
+	dryRun := flags.Bool("dry-run", false, "report what would change without changing anything")
+	installRoot := flags.String("install-root", defaultNodeInstallRoot(), "root for versioned Cockpit node releases")
+	unitDirectory := flags.String("unit-dir", defaultUserUnitDir(), "systemd user unit directory")
+	timeout := flags.Duration("timeout", 2*time.Minute, "maximum duration of one provider preflight")
+	jsonOutput := flags.Bool("json", false, "write the convergence result as JSON")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "node up accepts no positional arguments")
+		return 2
+	}
+	if *timeout <= 0 || *timeout > 10*time.Minute {
+		fmt.Fprintln(stderr, "node up timeout must be greater than zero and at most 10m")
+		return 2
+	}
+	config, err := nodeup.Load(*configPath, nodeup.Defaults{
+		StateDirectory: defaultStateDir(), ObserverEnv: defaultObserverEnv(), WorkerEnv: defaultWorkerEnv(),
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "load node configuration %s: %v\n", *configPath, err)
+		return 2
+	}
+	resolvedConfig, err := filepath.Abs(*configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve node configuration path: %v\n", err)
+		return 2
+	}
+	executablePath, err := executable()
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve Cockpit executable: %v\n", err)
+		return 1
+	}
+	runner := &nodeup.Runner{
+		Config: config, ConfigPath: resolvedConfig, Executable: executablePath, Version: version,
+		InstallRoot: *installRoot, UnitDirectory: *unitDirectory,
+		Ambient: captureNodeServiceEnvironment(lookupEnv), DryRun: *dryRun,
+		Doctor: doctor.Run, Inspect: profile.Inspect, InstallKit: profile.InstallKit,
+		Plan: nodeservice.PlanInstall, Service: service, Node: nodeup.NewHTTPClient(config.Listen),
+		Preflight: func(ctx context.Context, request nodeup.PreflightRequest) (state.PreflightReceipt, error) {
+			bounded, cancel := context.WithTimeout(ctx, *timeout)
+			defer cancel()
+			receipt, _, err := executePreflight(bounded, preflightExecution{
+				Provider: request.Provider, MCPServer: request.MCPServer, Repository: request.Repository,
+				StateDirectory: request.StateDirectory, SkillsDirectory: request.SkillsDirectory,
+			}, preflight.OSRunner{})
+			return receipt, err
+		},
+		ReadPreflights: state.ReadPreflights, KitRevision: profile.LockedManifest().Source.Revision,
+	}
+	if !*jsonOutput {
+		runner.Observe = func(step nodeup.Step) {
+			fmt.Fprintf(stdout, "%-13s %-8s %s\n", step.Name, step.Status, step.Detail)
+		}
+	}
+	result, runErr := execute(context.Background(), runner)
+	if *jsonOutput {
+		if err := writeIndentedJSON(stdout, result); err != nil {
+			fmt.Fprintf(stderr, "write node up result: %v\n", err)
+			return 1
+		}
+	} else if runErr == nil {
+		if result.DashboardURL != "" {
+			fmt.Fprintf(stdout, "Dashboard: %s\n", result.DashboardURL)
+		}
+		if result.DryRun {
+			fmt.Fprintln(stdout, "Dry run: nothing was changed")
+		}
+	}
+	if runErr != nil {
+		fmt.Fprintf(stderr, "node up: %v\n", runErr)
+		return 1
+	}
+	return 0
+}
+
+func defaultNodeConfigPath() string {
+	if root := os.Getenv("XDG_CONFIG_HOME"); root != "" {
+		return filepath.Join(root, "snowcat-cockpit", "node.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".config", "snowcat-cockpit", "node.json")
+	}
+	return filepath.Join(home, ".config", "snowcat-cockpit", "node.json")
 }
 
 func runInstallKit(args []string, stdout, stderr io.Writer) int {
@@ -1204,6 +1333,7 @@ func printUsage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
   snowcat-cockpit doctor [--json]
   snowcat-cockpit install-kit [--json] [--skills-dir <directory>]
+  snowcat-cockpit node up [--config <file>] [--dry-run] [--json]
   snowcat-cockpit node install|status|restart|uninstall [options]
   snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
   snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]

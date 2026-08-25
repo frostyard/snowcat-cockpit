@@ -233,11 +233,17 @@ Cockpit into a queue poller or treating a completed lease as a dead process.
   result, not a node startup failure.
 - Use `snowcat-cockpit node status` and `node restart` for a Linux service;
   `journalctl --user -u snowcat-cockpit.service` reads its process logs.
+- Bring a node to a running campaign — after a reboot, a Cockpit release, or
+  a Snowcat skill change — with `snowcat-cockpit node up`, which converges the
+  host to the declared configuration in `~/.config/snowcat-cockpit/node.json`
+  (ADR-0013, [node-up spec](../specs/node-up.md)). Campaigns never resume on
+  their own; `node up` is the explicit start.
 
 ## References
 
 - Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
-  [ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md)
+  [ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md),
+  [ADR-0013](../adr/0013-converge-the-node-from-a-declared-configuration.md)
 - Contracts: [node CLI and HTTP API](../specs/node-api.md),
   [node service](../specs/node-service.md)
 - Profile contract: [worker profiles and locked skill kit](../specs/worker-profiles.md)

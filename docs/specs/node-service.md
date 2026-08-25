@@ -7,6 +7,9 @@ worker processes, retained terminals, workspaces, or Snowcat work attempts.
 ## Interface
 
 ```text
+snowcat-cockpit node up [--config <file>] [--dry-run]
+  [--install-root <directory>] [--unit-dir <directory>]
+  [--timeout <duration>] [--json]
 snowcat-cockpit node install [--listen <host:port>] [--state-dir <directory>]
   [--skills-dir <directory>] [--source-root <directory>]
   [--observer-env <file>] [--worker-env <file>]
@@ -20,7 +23,9 @@ snowcat-cockpit node uninstall [--install-root <directory>]
   [--unit-dir <directory>] [--json]
 ```
 
-The fixed unit name is `snowcat-cockpit.service`. Defaults are:
+`node up` converges the host to a declared configuration by composing the
+commands below; its contract is [node-up.md](node-up.md). The fixed unit name
+is `snowcat-cockpit.service`. Defaults are:
 
 | Input | Default |
 | --- | --- |
@@ -57,8 +62,10 @@ rendering.
 
 `install.json` is versioned non-secret JSON containing the unit name, selected
 release, loopback listen address, state, source, skills, install and unit paths,
-dashboard URL, and install time. `service.env` contains only the observer and
-worker credential **paths** and present values from this fixed allowlist:
+dashboard URL, install time, and — when `node up` produced the install — the
+absolute `configPath` of the declared configuration. `service.env` contains
+only the observer and worker credential **paths** and present values from
+this fixed allowlist:
 
 ```text
 PATH XDG_CONFIG_HOME XDG_RUNTIME_DIR CODEX_HOME CLAUDE_CONFIG_DIR
@@ -130,37 +137,35 @@ Delegate=yes
 ## Upgrading across a worker-kit change
 
 A release whose embedded worker kit (`internal/profile/worker-kit`,
-`worker-kit.lock.json`) differs from the installed one MUST be rolled out in
-this order; each step exists because skipping it was observed to fail on
-2026-08-24 (snowcat-cockpit#5):
+`worker-kit.lock.json`) differs from the installed one MUST be rolled out as
+one `node up` run against the declared configuration ([node-up.md](node-up.md)).
+That run performs, in order, exactly the steps that were observed to fail
+when skipped on 2026-08-24 (snowcat-cockpit#5):
 
-1. Build the release and run `node install` with the same `--listen`,
-   `--state-dir`, `--skills-dir`, `--source-root`, `--observer-env`, and
-   `--worker-env` values as `install.json`, with the current `service.env`
-   sourced so every allowlisted value (including the image references)
-   carries over. The restart this performs **stops any running board
-   campaign**; managed workers and workspaces are retained.
-2. Replace the node's kit directory (`<skills-dir>`, normally
-   `<state-dir>/worker-kit`): `InstallKit` refuses to overwrite drifted
-   skills there exactly as it does in a checkout, so move the old directory
-   aside and run `install-kit --skills-dir <skills-dir>` until `profiles`
-   reports the kit `ready` at the new revision.
-3. Re-run `preflight --provider <name> --mcp-server <name> --repository
-   <owner/name>` for every provider a campaign uses: receipts are bound to
-   the kit revision, every provider reads "not structurally ready" until
-   then, and a campaign that refreshes first backs the provider off for
+1. Move the node's drifted kit directory (`<state-dir>/worker-kit`) aside and
+   install the embedded kit at the new revision; `InstallKit` refuses to
+   overwrite drifted skills, so the old directory is retained, never deleted.
+2. Reinstall the service from the configuration's paths and image pins (the
+   install record and rendered `service.env` differ from the plan). The
+   restart this performs **stops any running board campaign**; managed
+   workers and workspaces are retained.
+3. Re-run the provider preflight for every provider a lane uses: receipts are
+   bound to the kit revision, every provider reads "not structurally ready"
+   until then, and a campaign that refreshes first backs the provider off for
    five minutes.
-4. Start the campaign again (`POST /api/v1/campaign` with the previous
-   request) once `profiles` shows every lane's provider `ready`.
+4. Start the campaign again from the declared lanes once every lane's
+   provider is `ready`.
 
-A Snowcat skill change therefore always costs a Cockpit release plus these
-four steps before the snowcat lane (whose checkout carries the canonical
+A Snowcat skill change therefore always costs a Cockpit release plus one
+`node up` before the snowcat lane (whose checkout carries the canonical
 skills) launches again; Snowcat's repository tooling rollout plan tracks
 removing that coupling.
 
 ## References
 
-- Rationale: [ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md)
+- Rationale: [ADR-0011](../adr/0011-run-the-node-as-a-systemd-user-service.md),
+  [ADR-0013](../adr/0013-converge-the-node-from-a-declared-configuration.md)
 - Context: [Cockpit node](../design/node.md)
+- Convergence: [declared node configuration and `node up`](node-up.md)
 - Node runtime: [node CLI and HTTP API](node-api.md)
 - Worker retention: [managed workers](managed-workers.md)

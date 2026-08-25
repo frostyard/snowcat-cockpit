@@ -8,6 +8,7 @@ side-effect-free readiness command, and the loopback dashboard API.
 ```text
 snowcat-cockpit doctor [--json]
 snowcat-cockpit install-kit [--json] [--skills-dir <directory>]
+snowcat-cockpit node up [--config <file>] [--dry-run] [--json]
 snowcat-cockpit node <install|status|restart|uninstall> [options]
 snowcat-cockpit profiles [--json] [--skills-dir <directory>] [--state-dir <directory>]
 snowcat-cockpit preflight --provider <name> --mcp-server <name> --repository <owner/name> [--timeout <duration>]

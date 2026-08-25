@@ -412,3 +412,59 @@ func fileMode(t *testing.T, path string) os.FileMode {
 	}
 	return info.Mode().Perm()
 }
+
+func TestPlanInstallMatchesInstallWithoutChangingServiceState(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.request.ConfigPath = filepath.Join(t.TempDir(), "node.json")
+	fixture.request.Environment = map[string]string{
+		"PATH":                             "/usr/local/bin:/usr/bin",
+		"SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE": "sha256:" + strings.Repeat("a", 64),
+		"GH_TOKEN":                         "must-not-persist",
+	}
+	plan, err := PlanInstall(fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.runner.calls) != 0 {
+		t.Fatalf("plan must not touch systemd: %#v", fixture.runner.calls)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.request.InstallRoot, "current")); !os.IsNotExist(err) {
+		t.Fatalf("plan must not publish a release: %v", err)
+	}
+	if strings.Contains(plan.Environment, "GH_TOKEN") || !strings.Contains(plan.Environment, "SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE=") {
+		t.Fatalf("planned environment = %q", plan.Environment)
+	}
+	if plan.SourceRoot == "" || plan.StateDirectory == "" || plan.Listen != fixture.request.Listen {
+		t.Fatalf("plan = %#v", plan)
+	}
+
+	result, err := fixture.manager.Install(context.Background(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Install.Release != plan.Release {
+		t.Fatalf("install release %q != planned %q", result.Install.Release, plan.Release)
+	}
+	if result.Install.ConfigPath != fixture.request.ConfigPath {
+		t.Fatalf("config path = %q", result.Install.ConfigPath)
+	}
+	if written := readFile(t, result.Install.EnvironmentPath); written != plan.Environment {
+		t.Fatalf("service.env %q != planned %q", written, plan.Environment)
+	}
+	status, err := fixture.manager.Status(context.Background(), fixture.paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Install.ConfigPath != fixture.request.ConfigPath {
+		t.Fatalf("status config path = %q", status.Install.ConfigPath)
+	}
+}
+
+func TestValidateListenRequiresLoopback(t *testing.T) {
+	if err := ValidateListen("127.0.0.1:7686"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateListen("0.0.0.0:7686"); err == nil {
+		t.Fatal("non-loopback must be rejected")
+	}
+}
