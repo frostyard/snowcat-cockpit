@@ -24,10 +24,12 @@ const (
 )
 
 type snowcatFixture struct {
-	mutex        sync.Mutex
-	requests     []rpcRequest
-	rejectRenew  bool
-	completeItem workItem
+	mutex              sync.Mutex
+	requests           []rpcRequest
+	rejectRenew        bool
+	completeItem       workItem
+	accessClientID     string
+	accessClientSecret string
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -47,6 +49,10 @@ func (fixture *snowcatFixture) client() *http.Client {
 func (fixture *snowcatFixture) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	if request.Header.Get("Authorization") != "Bearer worker-secret" {
 		http.Error(response, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if fixture.accessClientID != "" && (request.Header.Get("CF-Access-Client-Id") != fixture.accessClientID || request.Header.Get("CF-Access-Client-Secret") != fixture.accessClientSecret) {
+		http.Error(response, "Access service token missing", http.StatusForbidden)
 		return
 	}
 	payload, _ := io.ReadAll(request.Body)
@@ -79,11 +85,12 @@ func (fixture *snowcatFixture) ServeHTTP(response http.ResponseWriter, request *
 func TestRelayBoundsAndRenewsLeaseAndRecordsAcknowledgedCompletion(t *testing.T) {
 	t.Parallel()
 
-	fixture := &snowcatFixture{}
+	fixture := &snowcatFixture{accessClientID: "access-client-id", accessClientSecret: "access-client-secret"}
 	workspace := relayWorkspace(t)
 	now := time.Date(2026, 8, 23, 21, 0, 0, 0, time.UTC)
 	relay, err := New(Config{
 		Endpoint: "https://snowcat.test/mcp", Token: "worker-secret", WorkerID: testWorker, Workspace: workspace,
+		AccessClientID: "access-client-id", AccessClientSecret: "access-client-secret",
 		HTTPClient: fixture.client(),
 		Now:        func() time.Time { return now }, Errors: io.Discard,
 	})
@@ -121,8 +128,26 @@ func TestRelayBoundsAndRenewsLeaseAndRecordsAcknowledgedCompletion(t *testing.T)
 	}
 	if payload, err := os.ReadFile(filepath.Join(workspace, ".agents", markerName)); err != nil {
 		t.Fatal(err)
-	} else if bytes.Contains(payload, []byte(testToken)) || bytes.Contains(payload, []byte("worker-secret")) {
+	} else if bytes.Contains(payload, []byte(testToken)) || bytes.Contains(payload, []byte("worker-secret")) || bytes.Contains(payload, []byte("access-client-secret")) {
 		t.Fatalf("marker contains credential material: %s", payload)
+	}
+}
+
+func TestRelayRejectsIncompleteOrMultilineAccessCredentials(t *testing.T) {
+	t.Parallel()
+
+	for _, config := range []Config{
+		{AccessClientID: "id-only"},
+		{AccessClientSecret: "secret-only"},
+		{AccessClientID: "bad\nid", AccessClientSecret: "access-secret"},
+	} {
+		config.Endpoint = "https://snowcat.test/mcp"
+		config.Token = "worker-secret"
+		config.WorkerID = testWorker
+		config.Workspace = relayWorkspace(t)
+		if _, err := New(config); !errors.Is(err, ErrInvalid) {
+			t.Errorf("New(%#v) error = %v", config, err)
+		}
 	}
 }
 

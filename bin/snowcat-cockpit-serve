@@ -3,8 +3,7 @@ set -euo pipefail
 
 readonly PROGRAM_NAME="${0##*/}"
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-readonly MCP_URL="https://snowcat.goat-snake.ts.net/mcp"
-readonly MCP_HOST="snowcat.goat-snake.ts.net"
+readonly MCP_URL="https://snowcat.frostyard.org/mcp"
 
 OBSERVER_CREDENTIAL_FILE="${SNOWCAT_COCKPIT_OBSERVER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/profile-observer.env}"
 WORKER_CREDENTIAL_FILE="${SNOWCAT_COCKPIT_WORKER_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/snowcat/mcp-token.env}"
@@ -51,16 +50,28 @@ done <"$OBSERVER_CREDENTIAL_FILE"
 [[ "$observer_token" =~ ^snowcat_[[:alnum:]_-]+$ ]] || die "observer credential file has an invalid SNOWCAT_OBSERVER_TOKEN"
 
 worker_token=""
+access_client_id=""
+access_client_secret=""
 while IFS= read -r line || [[ -n "$line" ]]; do
   case "$line" in
     'export SNOWCAT_MCP_TOKEN='*)
       [[ -z "$worker_token" ]] || die "worker credential file declares SNOWCAT_MCP_TOKEN more than once"
       worker_token="${line#export SNOWCAT_MCP_TOKEN=}"
       ;;
+    'export CF_ACCESS_CLIENT_ID='*)
+      [[ -z "$access_client_id" ]] || die "worker credential file declares CF_ACCESS_CLIENT_ID more than once"
+      access_client_id="${line#export CF_ACCESS_CLIENT_ID=}"
+      ;;
+    'export CF_ACCESS_CLIENT_SECRET='*)
+      [[ -z "$access_client_secret" ]] || die "worker credential file declares CF_ACCESS_CLIENT_SECRET more than once"
+      access_client_secret="${line#export CF_ACCESS_CLIENT_SECRET=}"
+      ;;
   esac
 done <"$WORKER_CREDENTIAL_FILE"
 
 [[ "$worker_token" =~ ^snowcat_[[:alnum:]_-]+$ ]] || die "worker credential file has an invalid SNOWCAT_MCP_TOKEN"
+[[ "$access_client_id" =~ ^[[:alnum:]._-]+$ ]] || die "worker credential file has an invalid CF_ACCESS_CLIENT_ID"
+[[ "$access_client_secret" =~ ^[[:alnum:]_-]+$ ]] || die "worker credential file has an invalid CF_ACCESS_CLIENT_SECRET"
 [[ -x "$COCKPIT_BIN" ]] || die "Cockpit binary is not executable: $COCKPIT_BIN (run make build)"
 
 if [[ -n "${SNOWCAT_COCKPIT_OCI_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_OCI_COPILOT_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE:-}" && -z "${GH_TOKEN:-}" ]]; then
@@ -72,25 +83,12 @@ fi
 
 export SNOWCAT_MCP_URL="$MCP_URL"
 export SNOWCAT_MCP_TOKEN="$worker_token"
-
-if [[ -n "${SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE:-}${SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE:-}" ]]; then
-  if [[ -z "${SNOWCAT_COCKPIT_DOCKER_ADD_HOST:-}" ]]; then
-    command -v getent >/dev/null 2>&1 || die "Docker workers require getent to resolve the Snowcat tailnet endpoint"
-    docker_host_address=""
-    while read -r address _; do
-      if [[ "$address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        docker_host_address="$address"
-        break
-      fi
-    done < <(getent ahostsv4 "$MCP_HOST")
-    [[ -n "$docker_host_address" ]] || die "Docker workers could not resolve the Snowcat tailnet endpoint"
-    export SNOWCAT_COCKPIT_DOCKER_ADD_HOST="$MCP_HOST:$docker_host_address"
-    unset docker_host_address
-  fi
-fi
+export SNOWCAT_CF_ACCESS_CLIENT_ID="$access_client_id"
+export SNOWCAT_CF_ACCESS_CLIENT_SECRET="$access_client_secret"
 
 export SNOWCAT_COCKPIT_MCP_URL="$MCP_URL"
 export SNOWCAT_COCKPIT_MCP_TOKEN="$observer_token"
-unset observer_token worker_token SNOWCAT_OBSERVER_TOKEN
+unset observer_token worker_token access_client_id access_client_secret
+unset SNOWCAT_OBSERVER_TOKEN CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET
 
 exec "$COCKPIT_BIN" serve "$@"

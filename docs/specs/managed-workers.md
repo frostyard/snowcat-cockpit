@@ -88,8 +88,12 @@ HTTP operations:
 1. Launch MUST require a current ready provider receipt for the exact selected
    `mcpServer` plus non-empty `SNOWCAT_MCP_URL` and
    `SNOWCAT_MCP_TOKEN` in the node environment before creating a branch or
-   workspace. Their values MUST remain outside argv, files, logs, durable
-   state, and API responses. Launch MUST create a unique branch and isolated Git workspace beneath the
+   workspace. Optional `SNOWCAT_CF_ACCESS_CLIENT_ID` and
+   `SNOWCAT_CF_ACCESS_CLIENT_SECRET` values MUST be present together; when
+   configured, the worker-local relay MUST send the corresponding Cloudflare
+   Access headers on every upstream request. All credential values MUST remain
+   outside argv, files, logs, durable state, and API responses. Launch MUST
+   create a unique branch and isolated Git workspace beneath the
    configured Cockpit state directory. `host` MUST use a linked worktree and
    MUST NOT clone, fetch, or pull. `oci` MUST use the self-contained local
    clone defined by the [rootless OCI contract](oci-workers.md), without a
@@ -128,6 +132,9 @@ HTTP operations:
    signal MUST stop before any further repository or GitHub mutation. The
    relay MUST mark `completeAttempted` before forwarding `complete_work` and
    `completeAcknowledged` only after a successful Snowcat MCP tool response.
+   A managed Codex invocation MUST allowlist the upstream URL, Snowcat token,
+   and optional Cloudflare Access credential environment-variable names for its
+   stdio relay without placing any value in argv.
    Immediately after claiming `pr-cure`, `pr-cure-change`,
    `pr-review`, or `pr-review-fix`, the worker MUST call `worker target` with
    the claimed item's exact non-secret ID, kind, pull-request URL, and bound

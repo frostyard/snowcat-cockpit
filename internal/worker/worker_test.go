@@ -461,7 +461,12 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
 		Random:   bytes.NewReader([]byte("87654321")),
 		Environment: func() []string {
-			return []string{"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000", "SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=must-be-filtered"}
+			return []string{
+				"PATH=/tools", "HOME=/home/test", "XDG_RUNTIME_DIR=/run/user/1000",
+				"SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp",
+				"SNOWCAT_CF_ACCESS_CLIENT_ID=access-id-never-in-argv", "SNOWCAT_CF_ACCESS_CLIENT_SECRET=access-secret-never-in-argv",
+				"GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=must-be-filtered",
+			}
 		},
 		OCI: OCIConfig{Images: map[string]string{"codex": image}, CodexHome: codexHome, GHConfigDir: ghConfig},
 	})
@@ -496,7 +501,8 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		"--userns=keep-id:uid=1000,gid=1000", "--cap-drop=ALL",
 		"--security-opt=no-new-privileges", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none", "--env",
 		"--tmpfs=/tmp:rw,exec,size=2g,mode=1777",
-		"SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "GH_TOKEN", image, OCIModelReview, record.ID, record.Workspace, codexHome, ghConfig,
+		"SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "SNOWCAT_CF_ACCESS_CLIENT_ID", "SNOWCAT_CF_ACCESS_CLIENT_SECRET", "GH_TOKEN",
+		image, OCIModelReview, record.ID, record.Workspace, codexHome, ghConfig,
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Podman launch is missing %q: %s", required, argv)
@@ -508,7 +514,10 @@ func TestOCIWorkerLaunchUsesOnlyTheBoundedRootlessPodmanProjection(t *testing.T)
 		}
 	}
 	joinedEnvironment := strings.Join(launch.Env, "\n")
-	if !strings.Contains(joinedEnvironment, "SNOWCAT_MCP_TOKEN=never-in-argv") || !strings.Contains(joinedEnvironment, "GH_TOKEN=github-never-in-argv") || strings.Contains(joinedEnvironment, "SECRET_SENTINEL") {
+	if !strings.Contains(joinedEnvironment, "SNOWCAT_MCP_TOKEN=never-in-argv") ||
+		!strings.Contains(joinedEnvironment, "SNOWCAT_CF_ACCESS_CLIENT_ID=access-id-never-in-argv") ||
+		!strings.Contains(joinedEnvironment, "SNOWCAT_CF_ACCESS_CLIENT_SECRET=access-secret-never-in-argv") ||
+		!strings.Contains(joinedEnvironment, "GH_TOKEN=github-never-in-argv") || strings.Contains(joinedEnvironment, "SECRET_SENTINEL") {
 		t.Fatalf("bounded OCI host environment = %q", joinedEnvironment)
 	}
 	stored, err := os.ReadFile(manager.recordPath(record.ID))
@@ -659,7 +668,7 @@ func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
 			return []string{"PATH=/tools", "HOME=/home/test", "SNOWCAT_MCP_TOKEN=never-in-argv", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "GH_TOKEN=github-never-in-argv", "SECRET_SENTINEL=filtered"}
 		},
 		OCI: OCIConfig{
-			DockerImages: map[string]string{"codex": image}, DockerAddHost: "snowcat.goat-snake.ts.net:100.108.168.44", CodexHome: codexHome, GHConfigDir: ghConfig,
+			DockerImages: map[string]string{"codex": image}, DockerAddHost: "snowcat.internal:192.0.2.10", CodexHome: codexHome, GHConfigDir: ghConfig,
 		},
 	})
 	if err != nil {
@@ -680,7 +689,8 @@ func TestDockerOCIWorkerUsesExplicitRootfulDaemonBoundary(t *testing.T) {
 		"/tools/docker", "--pull=never", "--read-only", "--user=1000:1000",
 		"--cap-drop=ALL", "--security-opt=no-new-privileges=true", "--cpus=4", "--pids-limit=1024", "--ulimit=core=0:0", "--log-driver=none",
 		"--tmpfs=/tmp:rw,exec,size=2g,mode=1777",
-		"--add-host", "snowcat.goat-snake.ts.net:100.108.168.44", "readonly", "SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL", "GH_TOKEN", image, record.ID, record.Workspace,
+		"--add-host", "snowcat.internal:192.0.2.10", "readonly", "SNOWCAT_MCP_TOKEN", "SNOWCAT_MCP_URL",
+		"SNOWCAT_CF_ACCESS_CLIENT_ID", "SNOWCAT_CF_ACCESS_CLIENT_SECRET", "GH_TOKEN", image, record.ID, record.Workspace,
 	} {
 		if !strings.Contains(argv, required) {
 			t.Errorf("Docker launch is missing %q: %s", required, argv)
@@ -913,6 +923,38 @@ func TestOCIReadinessFailsBeforeAllocatingAWorkspace(t *testing.T) {
 	}
 }
 
+func TestIncompleteAccessCredentialsFailBeforeAllocatingAWorkspace(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("e", 40)}
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"), NodeID: "node-access-not-ready",
+		Runner: runner, Ready: func(string) error { return nil },
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Environment: func() []string {
+			return []string{
+				"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret",
+				"SNOWCAT_CF_ACCESS_CLIENT_ID=id-only",
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Launch(context.Background(), LaunchRequest{Provider: "codex", Role: "reviewer", Repository: "frostyard/firn", Source: source})
+	if !errors.Is(err, ErrNotReady) || !strings.Contains(err.Error(), "must be present together") {
+		t.Fatalf("launch error = %v", err)
+	}
+	if runner.workspace != "" {
+		t.Fatalf("Access readiness failure allocated workspace %q", runner.workspace)
+	}
+}
+
 func TestInvalidDockerHostMappingFailsBeforeAllocatingAWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -931,7 +973,7 @@ func TestInvalidDockerHostMappingFailsBeforeAllocatingAWorkspace(t *testing.T) {
 		},
 		OCI: OCIConfig{
 			DockerImages:  map[string]string{"codex": "sha256:" + strings.Repeat("8", 64)},
-			DockerAddHost: "snowcat.goat-snake.ts.net:not-an-ip",
+			DockerAddHost: "snowcat.internal:not-an-ip",
 		},
 	})
 	if err != nil {
@@ -1071,13 +1113,18 @@ func TestHostProviderCommandsReplaceDirectSnowcatWithWorkerLocalRelay(t *testing
 				t.Errorf("%s command missing %q: %#v", provider, expected, command)
 			}
 		}
-		if strings.Contains(joined, "SNOWCAT_MCP_TOKEN") || strings.Contains(joined, "https://snowcat") {
+		if strings.Contains(joined, "worker-secret") || strings.Contains(joined, "access-client-secret") || strings.Contains(joined, "https://snowcat") {
 			t.Errorf("%s command contains upstream credential configuration: %#v", provider, command)
 		}
 		switch provider {
 		case "codex":
 			if !strings.Contains(joined, "mcp_servers.snowcat.enabled=false") {
 				t.Errorf("Codex command did not disable direct Snowcat: %#v", command)
+			}
+			for _, name := range []string{"SNOWCAT_MCP_URL", "SNOWCAT_MCP_TOKEN", "SNOWCAT_CF_ACCESS_CLIENT_ID", "SNOWCAT_CF_ACCESS_CLIENT_SECRET"} {
+				if !strings.Contains(joined, name) {
+					t.Errorf("Codex relay environment does not forward %s by name: %#v", name, command)
+				}
 			}
 		case "claude":
 			if !slices.Contains(command, "--strict-mcp-config") || !strings.Contains(joined, `"type":"stdio"`) {
@@ -1161,7 +1208,7 @@ func TestOCIWorkerProvisionsRepositoryToolsBeforeLaunch(t *testing.T) {
 			t.Fatalf("provisioning container lacks %q: %v", want, provision.Arguments)
 		}
 	}
-	for _, forbidden := range []string{"SNOWCAT_MCP_TOKEN", "GH_TOKEN", ".credentials.json"} {
+	for _, forbidden := range []string{"SNOWCAT_MCP_TOKEN", "SNOWCAT_CF_ACCESS_CLIENT_ID", "SNOWCAT_CF_ACCESS_CLIENT_SECRET", "GH_TOKEN", ".credentials.json"} {
 		if strings.Contains(provisionArgs, forbidden) {
 			t.Fatalf("provisioning container received %q: %v", forbidden, provision.Arguments)
 		}

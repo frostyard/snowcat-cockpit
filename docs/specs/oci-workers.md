@@ -31,13 +31,15 @@ The node reads OCI configuration only from its starting environment:
 | `SNOWCAT_COCKPIT_DOCKER_CODEX_IMAGE` | for Codex on Docker | Same immutable-image constraint in Docker's local image store |
 | `SNOWCAT_COCKPIT_DOCKER_CLAUDE_IMAGE` | for Claude on Docker | Same immutable-image constraint in Docker's local image store |
 | `SNOWCAT_COCKPIT_DOCKER_COPILOT_IMAGE` | for Copilot on Docker | Same immutable-image constraint in Docker's local image store |
-| `SNOWCAT_COCKPIT_DOCKER_ADD_HOST` | no | One exact `hostname:IPv4` mapping passed only to Docker; when any Docker image is configured, the checked-in Snowcat wrapper resolves its fixed tailnet hostname and supplies the mapping unless overridden |
+| `SNOWCAT_COCKPIT_DOCKER_ADD_HOST` | no | Optional operator-supplied exact `hostname:IPv4` mapping passed only to Docker; the checked-in wrapper uses ordinary DNS for its Cloudflare Tunnel endpoint and does not synthesize a mapping |
 | `CODEX_HOME` | no | Host Codex configuration root; defaults to `$HOME/.codex` |
 | `CLAUDE_CONFIG_DIR` | no | Host Claude configuration root; defaults to `$HOME/.claude` |
 | `COPILOT_HOME` | no | Host Copilot configuration root; defaults to `$HOME/.copilot` |
 | `GH_CONFIG_DIR` | no | Host GitHub CLI configuration root; defaults to `${XDG_CONFIG_HOME:-$HOME/.config}/gh` |
 | `SNOWCAT_MCP_TOKEN` | yes | Inherited by name; its value MUST NOT enter OCI argv, state, or logs |
 | `SNOWCAT_MCP_URL` | yes | Inherited by name; the secure serve wrapper derives it from its fixed MCP URL |
+| `SNOWCAT_CF_ACCESS_CLIENT_ID` | for an Access-protected endpoint | Inherited by name; its value MUST NOT enter OCI argv, state, or logs |
+| `SNOWCAT_CF_ACCESS_CLIENT_SECRET` | with Access client ID | Inherited by name; its value MUST NOT enter OCI argv, state, or logs |
 | `GH_TOKEN` | yes | Inherited by name; may be supplied by the operator or projected from the host GitHub CLI keyring by the secure serve wrapper |
 | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | image-owned for Claude | Fixed to `1`; never inherited from the host |
 
@@ -108,7 +110,9 @@ both paths (`go tool covdata`, `$GOPATH/bin`, cached tool builds).
 1. OCI readiness MUST be checked before allocating a branch or worktree: the
    selected runtime exists, serves Linux containers, the runtime-specific
    pinned image exists locally, Podman reports `rootless: true`,
-   `SNOWCAT_MCP_TOKEN`, `SNOWCAT_MCP_URL`, and `GH_TOKEN` are present, and every
+   `SNOWCAT_MCP_TOKEN`, `SNOWCAT_MCP_URL`, and `GH_TOKEN` are present, the
+   optional Cloudflare Access client ID and secret are either both present or
+   both absent, and every
    required input file passes the checks below.
 2. All providers require exact `hosts.yml` and `config.yml` beneath
    `GH_CONFIG_DIR`. Codex additionally requires exact `auth.json` and
@@ -127,7 +131,7 @@ both paths (`go tool covdata`, `$GOPATH/bin`, cached tool builds).
    read-only tmpfs behavior. Docker MUST use neither Podman-only flag.
    A configured Docker host mapping MUST contain one bounded hostname and IPv4
    literal and MUST be passed with `--add-host`; Cockpit MUST NOT replace
-   Docker's public DNS or use host networking to obtain tailnet resolution.
+   Docker's public DNS or use host networking to obtain endpoint resolution.
    It MUST NOT pass a runtime socket, privileged mode, added capability, or
    host networking.
 4. The only host filesystem mounts are the exact worker workspace read-write at
@@ -142,12 +146,12 @@ both paths (`go tool covdata`, `$GOPATH/bin`, cached tool builds).
    non-executable. The tmpfs roots MAY be mode `1777` for rootless-runtime
    portability; the non-root entrypoint MUST create the actual provider and
    GitHub configuration directories as mode `0700` beneath it.
-5. The runtime receives `--env SNOWCAT_MCP_TOKEN`, `--env SNOWCAT_MCP_URL`, and
-   `--env GH_TOKEN` with no values. The worker-local relay reads the first two
-   values from its inherited environment and forwards MCP to Snowcat without
-   either value entering argv, a file, the lifecycle marker, or node state. No
-   other inherited credential environment name enters the first-slice
-   container.
+5. The runtime receives `--env SNOWCAT_MCP_TOKEN`, `--env SNOWCAT_MCP_URL`,
+   `--env SNOWCAT_CF_ACCESS_CLIENT_ID`, `--env SNOWCAT_CF_ACCESS_CLIENT_SECRET`,
+   and `--env GH_TOKEN` with no values. The worker-local relay reads the first
+   four values from its inherited environment and forwards MCP to Snowcat
+   without any value entering argv, a file, the lifecycle marker, or node state.
+   No other inherited credential environment name enters the first-slice container.
 6. **Repository tools are provisioned before the lease, never inside it**
    ([ADR-0012](../adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
    §2–3). When the allocated workspace carries `mise.toml`, Cockpit MUST,
@@ -177,9 +181,11 @@ both paths (`go tool covdata`, `$GOPATH/bin`, cached tool builds).
    relay. Codex writes a mode-`0600`, credential-free invocation profile below
    its tmpfs `CODEX_HOME`; that profile disables the validated direct server,
    registers the relay with its argument array as TOML, forwards only the
-   names `SNOWCAT_MCP_URL` and `SNOWCAT_MCP_TOKEN` to it through `env_vars`
+   names `SNOWCAT_MCP_URL`, `SNOWCAT_MCP_TOKEN`,
+   `SNOWCAT_CF_ACCESS_CLIENT_ID`, and `SNOWCAT_CF_ACCESS_CLIENT_SECRET` to it
+   through `env_vars`
    (Codex starts MCP servers with a scrubbed environment and the relay reads
-   both from its own; no value enters the file), marks the relay required,
+   them from its own; no value enters the file), marks the relay required,
    and is selected with `--profile`. Codex uses
    `codex exec --dangerously-bypass-approvals-and-sandbox` and its role-pinned
    model. Copilot uses non-interactive `--prompt`, `--allow-all`, disabled

@@ -58,6 +58,7 @@ func TestRunNodeInstallProjectsOnlyAllowlistedEnvironment(t *testing.T) {
 		"SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE": "sha256:abc",
 		"GH_TOKEN":                         "secret",
 		"SNOWCAT_MCP_TOKEN":                "secret",
+		"SNOWCAT_CF_ACCESS_CLIENT_SECRET":  "secret",
 	}
 	lookup := func(name string) (string, bool) {
 		value, exists := values[name]
@@ -88,7 +89,7 @@ func TestRunNodeInstallProjectsOnlyAllowlistedEnvironment(t *testing.T) {
 	if request.Environment["PATH"] != values["PATH"] || request.Environment["SNOWCAT_COCKPIT_OCI_CLAUDE_IMAGE"] != "sha256:abc" {
 		t.Fatalf("projected environment = %#v", request.Environment)
 	}
-	for _, forbidden := range []string{"GH_TOKEN", "SNOWCAT_MCP_TOKEN"} {
+	for _, forbidden := range []string{"GH_TOKEN", "SNOWCAT_MCP_TOKEN", "SNOWCAT_CF_ACCESS_CLIENT_SECRET"} {
 		if _, exists := request.Environment[forbidden]; exists {
 			t.Fatalf("projected forbidden environment %s", forbidden)
 		}
@@ -263,11 +264,19 @@ func TestQueueObserverConfigurationUsesEnvironmentOnly(t *testing.T) {
 		t.Fatal("token without URL was accepted")
 	}
 	observer, err = queueObserverFromLookup(lookup(map[string]string{
-		"SNOWCAT_COCKPIT_MCP_URL":   "https://snowcat.test/mcp",
-		"SNOWCAT_COCKPIT_MCP_TOKEN": "secret",
+		"SNOWCAT_COCKPIT_MCP_URL":         "https://snowcat.test/mcp",
+		"SNOWCAT_COCKPIT_MCP_TOKEN":       "secret",
+		"SNOWCAT_CF_ACCESS_CLIENT_ID":     "access-client-id",
+		"SNOWCAT_CF_ACCESS_CLIENT_SECRET": "access-client-secret",
 	}))
 	if err != nil || observer == nil {
 		t.Fatalf("configured observer = %#v, error = %v", observer, err)
+	}
+	if _, err := queueObserverFromLookup(lookup(map[string]string{
+		"SNOWCAT_COCKPIT_MCP_URL": "https://snowcat.test/mcp", "SNOWCAT_COCKPIT_MCP_TOKEN": "secret",
+		"SNOWCAT_CF_ACCESS_CLIENT_ID": "id-only",
+	})); err == nil {
+		t.Fatal("incomplete Cloudflare Access credentials were accepted")
 	}
 }
 

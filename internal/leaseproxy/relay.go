@@ -34,15 +34,17 @@ var (
 )
 
 type Config struct {
-	Endpoint   string
-	Token      string
-	WorkerID   string
-	Workspace  string
-	HTTPClient *http.Client
-	Input      io.Reader
-	Output     io.Writer
-	Errors     io.Writer
-	Now        func() time.Time
+	Endpoint           string
+	Token              string
+	AccessClientID     string
+	AccessClientSecret string
+	WorkerID           string
+	Workspace          string
+	HTTPClient         *http.Client
+	Input              io.Reader
+	Output             io.Writer
+	Errors             io.Writer
+	Now                func() time.Time
 }
 
 type Marker struct {
@@ -63,15 +65,17 @@ type lease struct {
 }
 
 type Relay struct {
-	endpoint  *url.URL
-	token     string
-	workerID  string
-	workspace string
-	client    *http.Client
-	input     io.Reader
-	output    io.Writer
-	errors    io.Writer
-	now       func() time.Time
+	endpoint           *url.URL
+	token              string
+	accessClientID     string
+	accessClientSecret string
+	workerID           string
+	workspace          string
+	client             *http.Client
+	input              io.Reader
+	output             io.Writer
+	errors             io.Writer
+	now                func() time.Time
 
 	mutex                sync.Mutex
 	lifecycleMutex       sync.Mutex
@@ -128,6 +132,9 @@ func New(config Config) (*Relay, error) {
 	if strings.TrimSpace(config.Token) == "" || strings.ContainsAny(config.Token, "\r\n") || !workerIDPattern.MatchString(config.WorkerID) {
 		return nil, fmt.Errorf("%w: token and worker ID are required", ErrInvalid)
 	}
+	if (config.AccessClientID == "") != (config.AccessClientSecret == "") || strings.ContainsAny(config.AccessClientID+config.AccessClientSecret, "\r\n") {
+		return nil, fmt.Errorf("%w: Cloudflare Access client ID and secret must be supplied together as single-line values", ErrInvalid)
+	}
 	workspace, err := filepath.Abs(config.Workspace)
 	if err != nil {
 		return nil, fmt.Errorf("%w: workspace: %v", ErrInvalid, err)
@@ -160,6 +167,7 @@ func New(config Config) (*Relay, error) {
 	}
 	return &Relay{
 		endpoint: endpoint, token: strings.TrimSpace(config.Token), workerID: config.WorkerID,
+		accessClientID: config.AccessClientID, accessClientSecret: config.AccessClientSecret,
 		workspace: workspace, client: config.HTTPClient, input: config.Input, output: config.Output,
 		errors: config.Errors, now: config.Now,
 	}, nil
@@ -421,6 +429,10 @@ func (relay *Relay) forward(ctx context.Context, payload []byte) ([]byte, bool, 
 		return nil, false, fmt.Errorf("build Snowcat MCP request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+relay.token)
+	if relay.accessClientID != "" {
+		request.Header.Set("CF-Access-Client-Id", relay.accessClientID)
+		request.Header.Set("CF-Access-Client-Secret", relay.accessClientSecret)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
 	response, err := relay.client.Do(request)

@@ -27,6 +27,8 @@ chmod 0600 "$CREDENTIAL_FILE"
 
 cat >"$WORKER_CREDENTIAL_FILE" <<'EOF'
 export SNOWCAT_MCP_TOKEN=snowcat_worker_0123456789abcdef0123456789abcdef
+export CF_ACCESS_CLIENT_ID=0123456789abcdef.access
+export CF_ACCESS_CLIENT_SECRET=abcdef0123456789abcdef0123456789
 EOF
 chmod 0600 "$WORKER_CREDENTIAL_FILE"
 
@@ -36,10 +38,14 @@ set -euo pipefail
 [[ "$1" == "serve" ]]
 [[ "$2" == "--listen" ]]
 [[ "$3" == "127.0.0.1:17682" ]]
-[[ "$SNOWCAT_COCKPIT_MCP_URL" == "https://snowcat.goat-snake.ts.net/mcp" ]]
+[[ "$SNOWCAT_COCKPIT_MCP_URL" == "https://snowcat.frostyard.org/mcp" ]]
 [[ "$SNOWCAT_COCKPIT_MCP_TOKEN" == "snowcat_0123456789abcdef_0123456789abcdef0123456789abcdef" ]]
 [[ "$SNOWCAT_MCP_TOKEN" == "snowcat_worker_0123456789abcdef0123456789abcdef" ]]
+[[ "$SNOWCAT_CF_ACCESS_CLIENT_ID" == "0123456789abcdef.access" ]]
+[[ "$SNOWCAT_CF_ACCESS_CLIENT_SECRET" == "abcdef0123456789abcdef0123456789" ]]
 [[ -z "${SNOWCAT_OBSERVER_TOKEN+x}" ]]
+[[ -z "${CF_ACCESS_CLIENT_ID+x}" ]]
+[[ -z "${CF_ACCESS_CLIENT_SECRET+x}" ]]
 printf 'wrapper fixture passed\n'
 EOF
 chmod 0700 "$FAKE_COCKPIT"
@@ -61,21 +67,13 @@ printf 'github-token-fixture\n'
 EOF
 chmod 0700 "$FAKE_BIN/gh"
 
-cat >"$FAKE_BIN/getent" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-[[ "$1" == "ahostsv4" && "$2" == "snowcat.goat-snake.ts.net" ]]
-printf '100.108.168.44 STREAM snowcat.goat-snake.ts.net\n'
-EOF
-chmod 0700 "$FAKE_BIN/getent"
-
 cat >"$FAKE_COCKPIT" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == "serve" ]]
 [[ "$GH_TOKEN" == "github-token-fixture" ]]
-[[ "$SNOWCAT_MCP_URL" == "https://snowcat.goat-snake.ts.net/mcp" ]]
-[[ "$SNOWCAT_COCKPIT_DOCKER_ADD_HOST" == "snowcat.goat-snake.ts.net:100.108.168.44" ]]
+[[ "$SNOWCAT_MCP_URL" == "https://snowcat.frostyard.org/mcp" ]]
+[[ -z "${SNOWCAT_COCKPIT_DOCKER_ADD_HOST:-}" ]]
 printf 'OCI wrapper fixture passed\n'
 EOF
 chmod 0700 "$FAKE_COCKPIT"
@@ -89,6 +87,14 @@ output="$(
     "$WRAPPER"
 )"
 [[ "$output" == "OCI wrapper fixture passed" ]] || fail "unexpected OCI wrapper output: $output"
+
+cp "$WORKER_CREDENTIAL_FILE" "$TEST_ROOT/valid-worker.env"
+sed -i '/CF_ACCESS_CLIENT_SECRET/d' "$WORKER_CREDENTIAL_FILE"
+if SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" SNOWCAT_COCKPIT_WORKER_ENV="$WORKER_CREDENTIAL_FILE" SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
+  "$WRAPPER" >/dev/null 2>&1; then
+  fail "wrapper accepted a worker credential file without a Cloudflare Access secret"
+fi
+mv "$TEST_ROOT/valid-worker.env" "$WORKER_CREDENTIAL_FILE"
 
 chmod 0644 "$CREDENTIAL_FILE"
 if SNOWCAT_COCKPIT_OBSERVER_ENV="$CREDENTIAL_FILE" SNOWCAT_COCKPIT_WORKER_ENV="$WORKER_CREDENTIAL_FILE" SNOWCAT_COCKPIT_BIN="$FAKE_COCKPIT" \
