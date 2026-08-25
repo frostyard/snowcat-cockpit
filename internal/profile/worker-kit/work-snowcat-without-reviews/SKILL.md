@@ -77,3 +77,11 @@ repository — the bound pull request's branch at its recorded head for
 `existing-pull-request`, a fresh branch from a fresh base for
 `new-pull-request`, a detached never-mutated checkout for `read-only` — and
 declare one on every follow-up you propose.
+
+## Pull request body
+
+Any pull request you open here follows `work-snowcat-queue`'s rule in full:
+read the repository's own `.github/pull_request_template.md` first and write
+the body from it, including a **Risk classification** tier with its
+rationale — a missing section is the review gate's most common
+description-only block.

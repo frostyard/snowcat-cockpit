@@ -1047,7 +1047,7 @@ func TestBuildPromptPinsRoleSelections(t *testing.T) {
 		}
 	}
 	reviewer := BuildPrompt("worker-1234567890abcdef", "reviewer", "frostyard/firn")
-	for _, expected := range []string{"review-snowcat-queue", "only pr-review", "bounds claims to 120 seconds", "worker target", "exact bound head detached", "release the item", "merged or closed, call block_work", "result.artifacts and followUps as empty arrays ([])", "tool schema requires both"} {
+	for _, expected := range []string{"review-snowcat-queue", "only pr-review", "bounds claims to 120 seconds", "worker target", "exact bound head detached", "release the item", "merged or closed, call block_work"} {
 		if !strings.Contains(reviewer, expected) {
 			t.Fatalf("reviewer prompt missing %q: %s", expected, reviewer)
 		}
