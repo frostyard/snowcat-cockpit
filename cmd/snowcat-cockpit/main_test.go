@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/frostyard/snowcat-cockpit/internal/campaign"
 	"github.com/frostyard/snowcat-cockpit/internal/nodeservice"
 	"github.com/frostyard/snowcat-cockpit/internal/nodeup"
 	"github.com/frostyard/snowcat-cockpit/internal/preflight"
@@ -266,6 +268,36 @@ func TestQueueObserverConfigurationUsesEnvironmentOnly(t *testing.T) {
 	}))
 	if err != nil || observer == nil {
 		t.Fatalf("configured observer = %#v, error = %v", observer, err)
+	}
+}
+
+func TestRetainWorkspacesFromLookup(t *testing.T) {
+	t.Parallel()
+	lookup := func(values map[string]string) func(string) string {
+		return func(name string) string { return values[name] }
+	}
+
+	policy, err := retainWorkspacesFromLookup(lookup(nil))
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Count: defaultRetainWorkspaces}) {
+		t.Fatalf("default policy = %#v, error = %v", policy, err)
+	}
+	policy, err = retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "5"}))
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Count: 5}) {
+		t.Fatalf("count policy = %#v, error = %v", policy, err)
+	}
+	policy, err = retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "0"}))
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Count: 0}) {
+		t.Fatalf("explicit zero count policy = %#v, error = %v", policy, err)
+	}
+	policy, err = retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "6h"}))
+	if err != nil || policy != (campaign.RetentionPolicy{Configured: true, Age: 6 * time.Hour}) {
+		t.Fatalf("duration policy = %#v, error = %v", policy, err)
+	}
+	if _, err := retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "-1"})); err == nil {
+		t.Fatal("negative count was accepted")
+	}
+	if _, err := retainWorkspacesFromLookup(lookup(map[string]string{"SNOWCAT_COCKPIT_RETAIN_WORKSPACES": "not-a-duration"})); err == nil {
+		t.Fatal("invalid value was accepted")
 	}
 }
 
