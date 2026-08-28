@@ -13,7 +13,7 @@ FROM docker.io/library/node:26-bookworm-slim@sha256:cd565714d4da3e84bfd341e31448
 RUN npm install --global @openai/codex@0.149.0 \
     && npm cache clean --force
 
-FROM docker.io/library/golang:1.26.7-bookworm@sha256:6ef6e30f0ea5c384f6d111cf856e024e3086bbdcb1779da3f3b3fbba0aea53d2 AS fetch
+FROM docker.io/library/golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS fetch
 
 # No default: buildx sets TARGETARCH per platform, and a default here would
 # override it — the v0.1.3 arm64 build fetched amd64 binaries that way (the
@@ -50,7 +50,7 @@ RUN case "$TARGETARCH" in \
 
 # ---- the base every provider image is
 
-FROM docker.io/library/golang:1.26.7-bookworm@sha256:6ef6e30f0ea5c384f6d111cf856e024e3086bbdcb1779da3f3b3fbba0aea53d2 AS base
+FROM docker.io/library/golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS base
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
