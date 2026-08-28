@@ -108,8 +108,24 @@ from a blocked one.
 
 An idle running campaign waits for human proposal admission and Snowcat's
 pull-request verifier. Explicit stop cancels future setup, preflight,
-observation, and launch calls. Already-launched workers and every source and
-workspace remain retained for explicit operator action.
+observation, and launch calls. Stop itself stops no already-launched worker and
+deletes no source, terminal, or workspace: whatever execution state the campaign
+still holds at stop remains retained for explicit operator action.
+
+While a campaign runs, it does clean workspaces automatically, but only where
+nothing about them can still matter. A worker becomes a cleanup candidate when
+its provider process exited cleanly — never one reported failed — and its exact
+attempt correlation reached a terminal Snowcat outcome, or it was a stabilized
+worker whose lane found nothing to claim. `SNOWCAT_COCKPIT_RETAIN_WORKSPACES`
+bounds how many candidates accumulate before cleanup catches up: a non-negative
+integer count of the newest candidates to keep, defaulting to 20, or a duration
+such as `6h` that cleans a candidate once it has been eligible that long. An
+explicit `0` cleans every eligible candidate on each sweep. A failed worker, a
+worker whose lane never reached a terminal outcome, and any candidate whose
+cleanup the managed-worker contract refuses — an unclean tree, for example —
+stay retained for explicit operator action; a refused candidate is simply
+reconsidered on the next tick. The campaign record reports `workspacesCleaned`
+and `lastCleanupAt`.
 
 ## Operational notes
 
