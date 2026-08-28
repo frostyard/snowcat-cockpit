@@ -277,6 +277,11 @@ func (controller *Controller) Start(ctx context.Context, request Request) (Recor
 	if err := controller.write(controller.record); err != nil {
 		return Record{}, err
 	}
+	// The halt latch belongs to the campaign whose state stopped persisting,
+	// not to the controller. This campaign's own initial state just persisted,
+	// so it starts unhalted instead of inheriting an earlier campaign's failure
+	// and refusing to launch any worker for the rest of the process lifetime.
+	controller.stateFailed = false
 	runContext, cancel := context.WithCancel(context.Background())
 	controller.cancel = cancel
 	controller.done = make(chan struct{})
@@ -333,13 +338,18 @@ func (controller *Controller) Close() {
 // finalizeStopped records the campaign's stopped state once reconciliation has
 // ended and releases Close waiters. A failed write here cannot be retried away:
 // the stored state is stale, so the in-memory record carries the reason instead
-// and Get reports it to the operator.
+// and Get reports it to the operator. A campaign already halted by an earlier
+// persistence failure keeps that reason through finalization even when this
+// final write succeeds, because the writes it lost are still lost.
 func (controller *Controller) finalizeStopped() {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
 	now := controller.now().UTC()
 	controller.record.Status = StatusStopped
 	controller.record.Detail = "board campaign stopped; managed workers and workspaces remain retained"
+	if controller.stateFailed {
+		controller.record.Detail = stoppedAfterStateFailureDetail
+	}
 	controller.record.UpdatedAt = now
 	controller.record.StoppedAt = &now
 	controller.persistLocked()
