@@ -149,6 +149,20 @@ execution-side signals do not infer a Snowcat work outcome.
     workspaces accumulate before automatic cleanup catches up; a zero-value,
     unconfigured bound disables automatic cleanup entirely. The campaign
     record reports `workspacesCleaned` and `lastCleanupAt`.
+13. Every campaign state write after start MUST be checked. A failed post-start
+    write halts the campaign: further reconciliation is cancelled, no further
+    worker is launched, and the returned record reports the failure — `degraded`
+    with a persistence-failure detail while the campaign was still active, or
+    the stopped record's detail once reconciliation has finalized, because the
+    stored state is then stale. The reported reason MUST be sanitized and MUST
+    NOT carry the underlying filesystem error. `POST /api/v1/campaign/stop`
+    keeps its own contract: it returns that persistence failure to the caller,
+    leaves the record `stopping`, and retains every worker and workspace. The
+    halt binds to the campaign that lost its state, not to the node: once a
+    campaign's own initial state write succeeds, `POST /api/v1/campaign` starts
+    it unhalted and it launches normally. The reason MUST survive finalization
+    of the campaign that lost the writes — a stopped record reports the stale
+    state even when its final write succeeds, because the lost writes stay lost.
 
 ## References
 
