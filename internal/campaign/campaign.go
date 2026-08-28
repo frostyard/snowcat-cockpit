@@ -32,6 +32,13 @@ const (
 	minimumInterval        = 10 * time.Second
 	maximumInterval        = 5 * time.Minute
 	preflightRefreshWindow = 2 * time.Minute
+
+	// haltedDetail and stoppedAfterStateFailureDetail are the operator-facing
+	// reasons reported when the campaign cannot persist its own durable state.
+	// They name the failure without echoing the underlying filesystem error, so
+	// no path or other host detail reaches the node API.
+	haltedDetail                   = "board campaign state persistence failed; reconciliation is halted and no further workers launch"
+	stoppedAfterStateFailureDetail = "board campaign stopped after a state persistence failure; stored campaign state is stale and managed workers and workspaces remain retained"
 )
 
 var campaignNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
@@ -180,6 +187,7 @@ type Controller struct {
 
 	mu                sync.Mutex
 	record            Record
+	stateFailed       bool
 	cancel            context.CancelFunc
 	done              chan struct{}
 	backoff           map[string]time.Time
@@ -322,19 +330,25 @@ func (controller *Controller) Close() {
 	}
 }
 
+// finalizeStopped records the campaign's stopped state once reconciliation has
+// ended and releases Close waiters. A failed write here cannot be retried away:
+// the stored state is stale, so the in-memory record carries the reason instead
+// and Get reports it to the operator.
+func (controller *Controller) finalizeStopped() {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	now := controller.now().UTC()
+	controller.record.Status = StatusStopped
+	controller.record.Detail = "board campaign stopped; managed workers and workspaces remain retained"
+	controller.record.UpdatedAt = now
+	controller.record.StoppedAt = &now
+	controller.persistLocked()
+	controller.cancel = nil
+	close(controller.done)
+}
+
 func (controller *Controller) run(ctx context.Context) {
-	defer func() {
-		controller.mu.Lock()
-		now := controller.now().UTC()
-		controller.record.Status = StatusStopped
-		controller.record.Detail = "board campaign stopped; managed workers and workspaces remain retained"
-		controller.record.UpdatedAt = now
-		controller.record.StoppedAt = &now
-		_ = controller.write(controller.record)
-		controller.cancel = nil
-		close(controller.done)
-		controller.mu.Unlock()
-	}()
+	defer controller.finalizeStopped()
 
 	readyRepositories := controller.setupRepositories(ctx)
 	if ctx.Err() != nil {
@@ -479,7 +493,7 @@ func (controller *Controller) refreshPreflights(ctx context.Context, repositorie
 }
 
 func (controller *Controller) reconcile(ctx context.Context, repositories []managedrepo.Record, expiries map[string]time.Time) {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || controller.halted() {
 		return
 	}
 	workers, err := controller.workers.List(ctx)
@@ -615,6 +629,9 @@ func (controller *Controller) reconcile(ctx context.Context, repositories []mana
 			for _, repository := range repositories {
 				if remaining == 0 {
 					break
+				}
+				if ctx.Err() != nil || controller.halted() {
+					return
 				}
 				observed, ok := byRepository[repository.Repository]
 				if !ok || observed.err != nil || observed.snapshot.Counts[role] <= 0 {
@@ -839,7 +856,7 @@ func (controller *Controller) recordCleanup() {
 	controller.record.WorkspacesCleaned++
 	controller.record.LastCleanupAt = now
 	controller.record.UpdatedAt = now
-	_ = controller.write(controller.record)
+	controller.persistLocked()
 }
 
 // confirmPendingClaims checks whether a stabilized (running) launch probe has
@@ -1036,7 +1053,7 @@ func (controller *Controller) updateRepository(repository string, update func(*R
 		if controller.record.Repositories[index].Repository == repository {
 			update(&controller.record.Repositories[index])
 			controller.record.UpdatedAt = controller.now().UTC()
-			_ = controller.write(controller.record)
+			controller.persistLocked()
 			return
 		}
 	}
@@ -1049,13 +1066,13 @@ func (controller *Controller) updateProvider(status ProviderStatus) {
 		if controller.record.Providers[index].Provider == status.Provider && controller.record.Providers[index].MCPServer == status.MCPServer {
 			controller.record.Providers[index] = status
 			controller.record.UpdatedAt = controller.now().UTC()
-			_ = controller.write(controller.record)
+			controller.persistLocked()
 			return
 		}
 	}
 	controller.record.Providers = append(controller.record.Providers, status)
 	controller.record.UpdatedAt = controller.now().UTC()
-	_ = controller.write(controller.record)
+	controller.persistLocked()
 }
 
 func (controller *Controller) addWorker(workerID string) {
@@ -1063,7 +1080,7 @@ func (controller *Controller) addWorker(workerID string) {
 	defer controller.mu.Unlock()
 	controller.record.WorkerIDs = append(controller.record.WorkerIDs, workerID)
 	controller.record.UpdatedAt = controller.now().UTC()
-	_ = controller.write(controller.record)
+	controller.persistLocked()
 }
 
 func (controller *Controller) degrade(detail string) {
@@ -1072,7 +1089,7 @@ func (controller *Controller) degrade(detail string) {
 	controller.record.Status = StatusDegraded
 	controller.record.Detail = detail
 	controller.record.UpdatedAt = controller.now().UTC()
-	_ = controller.write(controller.record)
+	controller.persistLocked()
 }
 
 func (controller *Controller) setRunningStatus(ready bool) {
@@ -1089,7 +1106,7 @@ func (controller *Controller) setRunningStatus(ready bool) {
 		controller.record.Detail = "campaign has no ready repository/provider combination"
 	}
 	controller.record.UpdatedAt = controller.now().UTC()
-	_ = controller.write(controller.record)
+	controller.persistLocked()
 }
 
 func (controller *Controller) setReconciledStatus() {
@@ -1125,7 +1142,7 @@ func (controller *Controller) setReconciledStatus() {
 		controller.record.Detail = "reconciliation blocked by " + strings.Join(blockers, " and ") + "; ready lanes continue"
 	}
 	controller.record.UpdatedAt = controller.now().UTC()
-	_ = controller.write(controller.record)
+	controller.persistLocked()
 }
 
 func countLabel(count int, singular string) string {
@@ -1161,6 +1178,45 @@ func (controller *Controller) newID() (string, error) {
 		return "", err
 	}
 	return "campaign-" + hex.EncodeToString(bytes), nil
+}
+
+// persistLocked is the one bounded failure path for every post-start campaign
+// state write. A discarded error here would leave the controller launching
+// workers against state no operator can see, so a failed write halts the
+// campaign instead.
+//
+// The caller must hold controller.mu.
+func (controller *Controller) persistLocked() {
+	if err := controller.write(controller.record); err != nil {
+		controller.haltLocked()
+	}
+}
+
+// haltLocked marks the campaign halted by a durable state persistence failure:
+// the record reports the reason, and reconciliation is cancelled so no further
+// worker is launched. An already stopped campaign keeps its stopped status and
+// only gains the stale-state reason.
+//
+// The caller must hold controller.mu.
+func (controller *Controller) haltLocked() {
+	controller.stateFailed = true
+	if isActive(controller.record.Status) {
+		controller.record.Status = StatusDegraded
+		controller.record.Detail = haltedDetail
+	} else {
+		controller.record.Detail = stoppedAfterStateFailureDetail
+	}
+	if controller.cancel != nil {
+		controller.cancel()
+	}
+}
+
+// halted reports whether a durable state persistence failure has stopped this
+// campaign from launching anything further.
+func (controller *Controller) halted() bool {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	return controller.stateFailed
 }
 
 func (controller *Controller) read() (Record, error) {

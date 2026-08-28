@@ -221,6 +221,87 @@ func TestCampaignStopSurfacesPersistenceFailureWhileStillCancellingAndRetaining(
 	}
 }
 
+func TestCampaignHaltsReconciliationAndLaunchesWhenStatePersistenceFails(t *testing.T) {
+	repository := managedrepo.Record{
+		Repository: "frostyard/firn", Source: "/sources/firn",
+		BaseCommit: strings.Repeat("a", 40), Status: managedrepo.StatusReady,
+	}
+	repositories := &fakeRepositories{records: []managedrepo.Record{repository}}
+	queue := &fakeQueue{counts: map[string]map[queueview.Role]int{
+		repository.Repository: {queueview.RoleDiscoverer: 3},
+	}}
+	workers := &fakeWorkers{}
+	controller := newTestController(t, repositories, &fakePreflights{}, queue, workers)
+	controller.record.Status = StatusRunning
+	controller.record.Request = validRequest()
+	controller.record.Request.Discoverer.Capacity = 3
+	controller.record.Repositories = []RepositoryStatus{{Repository: repository.Repository, Status: StatusRunning}}
+	expiries := map[string]time.Time{
+		"claude\x00snowcat":      time.Now().Add(15 * time.Minute),
+		"copilot\x00snowcat-mcp": time.Now().Add(15 * time.Minute),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	controller.cancel = cancel
+	// The campaign started against a writable state directory and loses it
+	// afterwards, so every reconciliation write from here on fails.
+	controller.statePath = filepath.Join(t.TempDir(), "removed-directory", "campaign.json")
+
+	controller.reconcile(ctx, []managedrepo.Record{repository}, expiries)
+
+	workers.mu.Lock()
+	launched := len(workers.launched)
+	workers.mu.Unlock()
+	if launched != 0 {
+		t.Fatalf("launches = %d, want none once campaign state stopped persisting", launched)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("campaign state persistence failure did not cancel further reconciliation")
+	}
+	if !controller.halted() {
+		t.Fatal("campaign did not halt after its state persistence failed")
+	}
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusDegraded || record.Detail != haltedDetail {
+		t.Fatalf("campaign = %#v, want a degraded state-persistence halt observable to the operator", record)
+	}
+}
+
+func TestCampaignStoppedFinalizationReportsStatePersistenceFailure(t *testing.T) {
+	controller := newTestController(t, &fakeRepositories{}, &fakePreflights{}, &fakeQueue{counts: map[string]map[queueview.Role]int{}}, &fakeWorkers{})
+	controller.record.Status = StatusStopping
+	controller.record.Detail = "stopping future campaign reconciliation; workers remain retained"
+	controller.done = make(chan struct{})
+	controller.statePath = filepath.Join(t.TempDir(), "removed-directory", "campaign.json")
+
+	controller.finalizeStopped()
+
+	select {
+	case <-controller.done:
+	default:
+		t.Fatal("finalization did not release Close waiters")
+	}
+	if _, err := os.Stat(controller.statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stat stored campaign state = %v, want the write to have failed", err)
+	}
+	if !controller.halted() {
+		t.Fatal("finalization did not record the state persistence failure")
+	}
+	record, err := controller.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusStopped || record.StoppedAt == nil {
+		t.Fatalf("finalized record = %#v, want a stopped campaign", record)
+	}
+	if record.Detail != stoppedAfterStateFailureDetail {
+		t.Fatalf("finalized detail = %q, want the stale-state reason", record.Detail)
+	}
+}
+
 func TestCampaignRepinsManagedBaseImmediatelyBeforeEveryImplementerLaunch(t *testing.T) {
 	repository := managedrepo.Record{
 		Repository: "frostyard/firn", Source: "/sources/firn",
