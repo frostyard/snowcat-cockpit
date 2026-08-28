@@ -216,7 +216,7 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 		if runner.provisionFails {
 			return []byte("mise ERROR Failed to install aqua:jqlang/jq@1.7.1: jq@1.7.1 is not in the lockfile\nmise ERROR Version: 2026.8.12\nmise ERROR Run with --verbose\n"), errors.New("exit status 1")
 		}
-		return []byte("mise go@1.26.7 ✓ installed\n{\"go\":[{\"version\":\"1.26.7\"}],\"golangci-lint\":[{\"version\":\"2.13.1\"}]}\n"), nil
+		return []byte("mise go@1.27.0 ✓ installed\n{\"go\":[{\"version\":\"1.27.0\"}],\"golangci-lint\":[{\"version\":\"2.13.1\"}]}\n"), nil
 	case strings.Contains(arguments, "image\x00inspect"):
 		return []byte("[]\n"), nil
 	case strings.Contains(arguments, "stop\x00--ignore"):
@@ -1177,7 +1177,7 @@ func provisioningTestManager(t *testing.T, runner *fakeRunner) (*Manager, string
 func TestOCIWorkerProvisionsRepositoryToolsBeforeLaunch(t *testing.T) {
 	t.Parallel()
 
-	runner := &fakeRunner{pinFiles: map[string]string{"mise.toml": "[tools]\ngolangci-lint = \"2.13.1\"\n", "mise.lock": "lockfile_version = 1\n", "go.mod": "module x\n\ngo 1.26\n\ntoolchain go1.26.7\n"}}
+	runner := &fakeRunner{pinFiles: map[string]string{"mise.toml": "[tools]\ngolangci-lint = \"2.13.1\"\n", "mise.lock": "lockfile_version = 1\n", "go.mod": "module x\n\ngo 1.26\n\ntoolchain go1.27.0\n"}}
 	manager, source := provisioningTestManager(t, runner)
 	record, err := manager.Launch(context.Background(), LaunchRequest{Adapter: AdapterOCI, Provider: "claude", Role: "implementer", Repository: "frostyard/std", Source: source})
 	if err != nil {
@@ -1186,7 +1186,7 @@ func TestOCIWorkerProvisionsRepositoryToolsBeforeLaunch(t *testing.T) {
 	if record.Provisioning == nil || record.Provisioning.LockDigest == "" || !strings.HasPrefix(record.Provisioning.Cache, filepath.Join(manager.stateDirectory, "mise", "frostyard", "std")) {
 		t.Fatalf("provisioning = %#v", record.Provisioning)
 	}
-	if want := []string{"go@1.26.7", "golangci-lint@2.13.1"}; strings.Join(record.Provisioning.Tools, ",") != strings.Join(want, ",") {
+	if want := []string{"go@1.27.0", "golangci-lint@2.13.1"}; strings.Join(record.Provisioning.Tools, ",") != strings.Join(want, ",") {
 		t.Fatalf("tools = %v, want %v", record.Provisioning.Tools, want)
 	}
 	if _, err := os.Stat(filepath.Join(record.Provisioning.Cache, ".provisioned.json")); err != nil {

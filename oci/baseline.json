@@ -1,10 +1,10 @@
 {
   "$comment": "What every snowcat-cockpit worker image guarantees on PATH (ADR-0012 §1). A repository declares anything beyond this in its mise.toml/mise.lock (core ADR-0043). Versions here are the image's pins; Debian packages come from the pinned golang:bookworm base digest. Bump alongside oci/Containerfile.",
   "version": 1,
-  "base": "docker.io/library/golang:1.26.7-bookworm",
+  "base": "docker.io/library/golang:1.27.0-bookworm",
   "tools": {
-    "go": "1.26.7",
-    "gofmt": "1.26.7",
+    "go": "1.27.0",
+    "gofmt": "1.27.0",
     "node": "26",
     "npm": "bundled with node 26",
     "mise": "2026.8.12",

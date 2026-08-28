@@ -68,7 +68,7 @@ every layer. Build all local images with `make oci-image`, or one with
 `make oci-image-<provider>`; build them in Docker's distinct local store
 with `make docker-image` or `make docker-image-<provider>`. The base pins
 Codex CLI `0.149.0`, Claude Code `2.1.239`, Copilot CLI `1.0.80`, Go
-`1.26.7` (the image tracks the highest `go.mod` toolchain in the fleet,
+`1.27.0` (the image tracks the highest `go.mod` toolchain in the fleet,
 because `GOTOOLCHAIN=local` refuses a lower one), Node.js `26`, mise
 `2026.8.12`, multi-architecture base-image manifest digests, and the
 official amd64/arm64 release checksums for every fetched binary. Launch
