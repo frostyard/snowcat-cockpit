@@ -439,7 +439,7 @@ func TestRunNodeUpBuildsRunnerFromConfigAndFlags(t *testing.T) {
 	if _, leaked := captured.Ambient["GH_TOKEN"]; leaked {
 		t.Fatal("ambient environment must be allowlisted")
 	}
-	if captured.KitRevision == "" || captured.Service == nil || captured.Node == nil || captured.Preflight == nil {
+	if captured.RefreshKit == nil || captured.Service == nil || captured.Node == nil || captured.Preflight == nil {
 		t.Fatalf("runner dependencies incomplete: %#v", captured)
 	}
 	output := stdout.String()

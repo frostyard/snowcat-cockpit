@@ -1,4 +1,4 @@
-# Spec: Worker profiles and locked skill kit
+# Spec: Worker profiles and source-backed skill kit
 
 This contract governs the provider-neutral worker profiles exposed by the
 Cockpit CLI and dashboard, and the structural checks performed against
@@ -7,8 +7,9 @@ execution adapters, and operators preparing a machine for worker launches.
 
 ## Interface
 
-The locked kit manifest is embedded at build time from
-`internal/profile/worker-kit.lock.json`:
+Cockpit embeds an offline-floor kit and manifest at build time from
+`internal/profile/worker-kit.lock.json`. The node's active kit uses the same
+manifest shape and is persisted beneath its configured skill root:
 
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
@@ -25,17 +26,27 @@ snowcat-cockpit profiles [--json] [--skills-dir <directory>]
 snowcat-cockpit serve ... [--skills-dir <directory>]
 ```
 
-Cockpit ships the exact locked skill bytes and materializes them only through
-the explicit operator action:
+Cockpit ships the exact offline-floor bytes and materializes them through:
 
 ```text
 snowcat-cockpit install-kit [--json] [--skills-dir <directory>]
 ```
 
-Installation creates missing skill directories and `SKILL.md` files with
-private modes. A matching file is left intact. A missing file is installed. A
-different, unreadable, non-regular, or oversized file stops the operation and
-is never replaced.
+`install-kit` creates missing skill directories and `SKILL.md` files with
+private modes and records the embedded manifest as active. A matching file is
+left intact. A missing file is installed. A different, unreadable,
+non-regular, or oversized file stops the operation and is never replaced.
+
+During [`node up`](node-up.md), repository setup yields an exact prepared
+`frostyard/snowcat` commit. Cockpit reads each canonical skill with
+`git show <commit>:<path>`, computes its SHA-256, stages a complete kit beside
+the active directory, validates its bounded UTF-8 skill frontmatter, and stores
+it under `.generations/<revision>`. One atomic `.active` symlink replacement
+selects the immutable generation. The previous generation and root offline
+floor remain as last-good state. Source unavailability leaves the selection
+untouched; invalid active state fails visibly instead of selecting unverified
+bytes. A host-local kit lock serializes that selection with the final
+revision-readiness check and provider start.
 
 `--skills-dir` defaults to `SNOWCAT_COCKPIT_SKILLS_DIR` when set, then
 `$HOME/.agents/skills`. It is the directory whose immediate children are the
@@ -93,11 +104,14 @@ The implementer profile receives only kinds that reach the ordered classifier's
 
 1. Structural inspection MUST NOT invoke a provider, contact Snowcat, claim
    work, install a skill, or modify provider or Cockpit state.
-2. Skill content MUST be compared byte-for-byte through the locked SHA-256;
+2. Skill content MUST be compared byte-for-byte through the active manifest's
+   SHA-256;
    presence without a matching digest is `drifted`, never `ready`.
-3. Kit installation MUST verify embedded bytes against the lock before writing,
-   MUST preflight all existing targets, and MUST refuse to replace drifted
-   content.
+3. Embedded-floor installation MUST verify embedded bytes against the lock
+   before writing. Source refresh MUST read one exact prepared Snowcat commit,
+   verify every staged byte against the derived manifest, atomically select the
+   complete directory, retain the prior directory, and refuse to replace
+   drifted active content.
 4. Missing provider executables and missing or drifted skills MUST prevent the
    affected provider from becoming `preflight-required` or `ready`.
 5. `unchecked` MCP means no live connection claim has been made. It MUST NOT
@@ -109,19 +123,28 @@ The implementer profile receives only kinds that reach the ordered classifier's
 8. A provider launch control MUST remain disabled unless every launch-critical
    check, including its current live MCP preflight, is `ready`. Another
    provider's failure MUST NOT invalidate a ready provider.
+9. Non-Snowcat workers and preflight workspaces MUST receive the active kit.
+   Every destination root MUST be checked before any destination is written.
+   A managed worker's exact revision and digests MUST be persisted before the
+   first Cockpit-owned skill file is created.
+   A worker for `frostyard/snowcat` MUST use the exact canonical skill bytes in
+   its prepared checkout and MUST NOT have Cockpit-owned skill files installed
+   over that checkout.
 
 ## Derived artifacts
 
 | Artifact | Derivation |
 | --- | --- |
-| `profiles` text/JSON output | Locked manifest, selected skill root, and executable lookup |
-| `install-kit` text/JSON output | Embedded locked skill payloads and selected kit root |
+| `profiles` text/JSON output | Active manifest, selected skill root, and executable lookup |
+| `install-kit` text/JSON output | Embedded offline-floor payloads and selected kit root |
+| Active kit | Exact prepared Snowcat commit, canonical skill paths, and derived SHA-256 values |
 | `/api/v1/profiles` | Same structural snapshot used by the CLI |
 | Dashboard worker-profile table | `/api/v1/profiles` provider and kit checks |
 
 ## References
 
-- Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md)
+- Rationale: [ADR-0002](../adr/0002-build-a-node-local-cockpit-appliance.md),
+  [ADR-0012](../adr/0012-provision-repository-tools-before-the-lease-and-derive-node-state-from-its-sources.md)
 - Context: [Cockpit node design](../design/node.md)
 - Built in: [Production roadmap, Phase 2](../plans/0002-production-roadmap.md#phase-2--make-worker-profiles-reproducible)
 - Live readiness: [provider preflight](provider-preflight.md)

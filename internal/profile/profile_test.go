@@ -40,7 +40,7 @@ func TestInstallKitMaterializesEmbeddedSkillsAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, check := range second.Checks {
-		if check.Detail != "already matches the locked revision" {
+		if check.Detail != "already matches the served revision" {
 			t.Fatalf("second install check = %#v", check)
 		}
 	}

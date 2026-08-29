@@ -3,6 +3,7 @@ package nodeup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,13 @@ func (node *fakeNode) SetupRepository(_ context.Context, repository string) (man
 	if err := node.setupErr[repository]; err != nil {
 		return managedrepo.Record{}, err
 	}
-	return managedrepo.Record{Repository: repository, Status: managedrepo.StatusReady, BaseCommit: strings.Repeat("a", 40), Detail: "managed source refreshed"}, nil
+	return managedrepo.Record{
+		Repository: repository,
+		Status:     managedrepo.StatusReady,
+		Source:     filepath.Join("/managed", strings.ReplaceAll(repository, "/", "-")),
+		BaseCommit: strings.Repeat("a", 40),
+		Detail:     "managed source refreshed",
+	}, nil
 }
 
 func (node *fakeNode) Campaign(context.Context) (campaign.Record, error) {
@@ -80,14 +87,15 @@ func (node *fakeNode) StartCampaign(_ context.Context, request campaign.Request)
 }
 
 type fixture struct {
-	runner    *Runner
-	service   *fakeService
-	node      *fakeNode
-	proofs    []PreflightRequest
-	proofFail map[string]int
-	steps     []Step
-	installs  []string
-	kitStatus string
+	runner      *Runner
+	service     *fakeService
+	node        *fakeNode
+	proofs      []PreflightRequest
+	proofFail   map[string]int
+	steps       []Step
+	installs    []string
+	kitStatus   string
+	kitRevision string
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -108,10 +116,11 @@ func newFixture(t *testing.T) *fixture {
 		Health:  &nodeservice.Health{Status: "ok", NodeID: "node-0123456789abcdef0123456789abcdef", Version: "v0.2.1"},
 	}
 	f := &fixture{
-		service:   &fakeService{status: healthy, install: healthy},
-		node:      &fakeNode{startedID: "campaign-0123456789abcdef"},
-		proofFail: map[string]int{},
-		kitStatus: profile.StatusReady,
+		service:     &fakeService{status: healthy, install: healthy},
+		node:        &fakeNode{startedID: "campaign-0123456789abcdef"},
+		proofFail:   map[string]int{},
+		kitStatus:   profile.StatusReady,
+		kitRevision: testKitRevision,
 	}
 	f.runner = &Runner{
 		Config: config, ConfigPath: "/config/node.json", Executable: "/dist/snowcat-cockpit", Version: "v0.2.1",
@@ -123,11 +132,17 @@ func newFixture(t *testing.T) *fixture {
 			}}
 		},
 		Inspect: func(string) profile.Snapshot {
-			return profile.Snapshot{Kit: profile.Kit{Status: f.kitStatus, Revision: testKitRevision}}
+			return profile.Snapshot{Kit: profile.Kit{Status: f.kitStatus, Revision: f.kitRevision}}
 		},
 		InstallKit: func(directory string) (profile.InstallResult, error) {
 			f.installs = append(f.installs, directory)
+			f.kitStatus = profile.StatusReady
 			return profile.InstallResult{Directory: directory, Status: profile.StatusReady}, nil
+		},
+		RefreshKit: func(context.Context, string, string, string, time.Time) (profile.RefreshResult, error) {
+			return profile.RefreshResult{
+				Status: profile.StatusReady, Revision: f.kitRevision, PreviousRevision: f.kitRevision,
+			}, nil
 		},
 		Plan: func(request nodeservice.InstallRequest) (nodeservice.InstallPlan, error) {
 			return nodeservice.InstallPlan{
@@ -142,13 +157,12 @@ func newFixture(t *testing.T) *fixture {
 				f.proofFail[request.Provider]--
 				return state.PreflightReceipt{Provider: request.Provider, MCPServer: request.MCPServer, Status: profile.StatusFailed, Detail: "no proof"}, nil
 			}
-			return state.PreflightReceipt{Provider: request.Provider, MCPServer: request.MCPServer, Status: profile.StatusReady, Detail: "proved", ExpiresAt: time.Now().Add(15 * time.Minute), KitRevision: testKitRevision}, nil
+			return state.PreflightReceipt{Provider: request.Provider, MCPServer: request.MCPServer, Status: profile.StatusReady, Detail: "proved", ExpiresAt: time.Now().Add(15 * time.Minute), KitRevision: f.kitRevision}, nil
 		},
 		ReadPreflights: func(string) (map[string]state.PreflightReceipt, error) {
 			return map[string]state.PreflightReceipt{}, nil
 		},
-		KitRevision: testKitRevision,
-		Now:         func() time.Time { return time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC) },
+		Now: func() time.Time { return time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC) },
 		ReadFile: func(string) ([]byte, error) {
 			return []byte("PATH=\"/usr/bin\"\n"), nil
 		},
@@ -174,7 +188,7 @@ func TestRunConvergesInOrderAndSkipsWhatIsAlreadyInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, stepStatuses(result.Steps))
 	}
-	if got := stepStatuses(result.Steps); got != "doctor=ok kit=skipped install=skipped repositories=ok preflight=ok campaign=ok status=ok" {
+	if got := stepStatuses(result.Steps); got != "doctor=ok kit=skipped install=skipped repositories=ok source-kit=skipped preflight=ok campaign=ok status=ok" {
 		t.Fatalf("steps = %s", got)
 	}
 	if len(f.service.installs) != 0 {
@@ -194,6 +208,53 @@ func TestRunConvergesInOrderAndSkipsWhatIsAlreadyInPlace(t *testing.T) {
 	}
 	if result.DashboardURL != "http://127.0.0.1:7686" || result.Node == nil {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestRunRefreshesWorkerKitFromPreparedSnowcatCommitBeforePreflight(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	var source, revision, target string
+	f.runner.RefreshKit = func(_ context.Context, gotSource, gotRevision, gotTarget string, _ time.Time) (profile.RefreshResult, error) {
+		source, revision, target = gotSource, gotRevision, gotTarget
+		previous := f.kitRevision
+		f.kitRevision = gotRevision
+		return profile.RefreshResult{
+			Status: profile.StatusReady, PreviousRevision: previous, Revision: gotRevision,
+			RetainedDirectory: gotTarget + ".previous",
+		}, nil
+	}
+	result, err := f.runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, stepStatuses(result.Steps))
+	}
+	if source != "/managed/frostyard-snowcat" || revision != strings.Repeat("a", 40) || target != f.runner.Config.SkillsDirectory() {
+		t.Fatalf("refresh arguments = %q %q %q", source, revision, target)
+	}
+	if result.Steps[4].Name != "source-kit" || result.Steps[4].Status != StepOK || !strings.Contains(result.Steps[4].Detail, "managed Snowcat revision") {
+		t.Fatalf("source-kit step = %#v", result.Steps[4])
+	}
+	for _, proof := range f.proofs {
+		if proof.SkillsDirectory != target {
+			t.Fatalf("preflight did not use active kit: %#v", proof)
+		}
+	}
+}
+
+func TestRunRetainsLastGoodKitWhenManagedSkillBytesAreUnavailable(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.runner.RefreshKit = func(context.Context, string, string, string, time.Time) (profile.RefreshResult, error) {
+		return profile.RefreshResult{}, fmt.Errorf("%w: offline", profile.ErrSourceUnavailable)
+	}
+	result, err := f.runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, stepStatuses(result.Steps))
+	}
+	if result.Steps[4].Name != "source-kit" || result.Steps[4].Status != StepSkipped || !strings.Contains(result.Steps[4].Detail, "last-good") {
+		t.Fatalf("source-kit step = %#v", result.Steps[4])
 	}
 }
 
@@ -267,6 +328,32 @@ func TestRunMovesDriftedKitAsideAndInstallsMissingKit(t *testing.T) {
 	}
 	if renameCalled || len(g.installs) != 1 {
 		t.Fatalf("missing kit: rename = %v installs = %v", renameCalled, g.installs)
+	}
+}
+
+func TestRunFailsClosedOnDriftedSourceBackedKit(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.kitStatus = profile.StatusDrifted
+	skills := f.runner.Config.SkillsDirectory()
+	if err := os.MkdirAll(skills, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(".generations", strings.Repeat("a", 40)), filepath.Join(skills, ".active")); err != nil {
+		t.Fatal(err)
+	}
+	renamed := false
+	f.runner.Rename = func(string, string) error { renamed = true; return nil }
+	result, err := f.runner.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "integrity failed") {
+		t.Fatalf("run error = %v", err)
+	}
+	if len(result.Steps) != 2 || result.Steps[1].Name != "kit" || result.Steps[1].Status != StepFailed {
+		t.Fatalf("steps = %#v", result.Steps)
+	}
+	if renamed || len(f.installs) != 0 {
+		t.Fatalf("source-backed drift was replaced: renamed=%t installs=%v", renamed, f.installs)
 	}
 }
 
@@ -345,7 +432,7 @@ func TestRunAbortsBeforeCampaignWhenProofStillFails(t *testing.T) {
 	if err == nil || !errors.Is(err, ErrConverge) || !strings.Contains(err.Error(), "copilot") {
 		t.Fatalf("err = %v", err)
 	}
-	if got := stepStatuses(result.Steps); got != "doctor=ok kit=skipped install=skipped repositories=ok preflight=failed" {
+	if got := stepStatuses(result.Steps); got != "doctor=ok kit=skipped install=skipped repositories=ok source-kit=skipped preflight=failed" {
 		t.Fatalf("steps = %s", got)
 	}
 	if len(f.node.started) != 0 {
@@ -362,8 +449,8 @@ func TestRunLeavesAnActiveCampaignAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.node.started) != 0 || result.Campaign == nil || result.Campaign.ID != "campaign-live" || result.Steps[5].Status != StepSkipped {
-		t.Fatalf("campaign step = %#v started = %v", result.Steps[5], f.node.started)
+	if len(f.node.started) != 0 || result.Campaign == nil || result.Campaign.ID != "campaign-live" || result.Steps[6].Status != StepSkipped {
+		t.Fatalf("campaign step = %#v started = %v", result.Steps[6], f.node.started)
 	}
 
 	g := newFixture(t)
@@ -423,7 +510,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stepStatuses(result.Steps); got != "doctor=ok kit=planned install=planned repositories=planned preflight=planned campaign=planned status=planned" {
+	if got := stepStatuses(result.Steps); got != "doctor=ok kit=planned install=planned repositories=planned source-kit=planned preflight=planned campaign=planned status=planned" {
 		t.Fatalf("steps = %s", got)
 	}
 	if len(f.installs) != 0 || len(f.service.installs) != 0 || len(f.node.enrolled) != 0 || len(f.proofs) != 0 || len(f.node.started) != 0 || !result.DryRun {

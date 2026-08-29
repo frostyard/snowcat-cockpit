@@ -40,12 +40,14 @@ const (
 	OCIModelSonnet  = "sonnet"
 	OCIModelOpus    = "opus"
 
-	StatusAllocating = "allocating"
-	StatusRunning    = "running"
-	StatusExited     = "exited"
-	StatusFailed     = "failed"
-	StatusStopped    = "stopped"
-	StatusCleaned    = "cleaned"
+	StatusAllocating     = "allocating"
+	StatusRunning        = "running"
+	StatusExited         = "exited"
+	StatusFailed         = "failed"
+	StatusStopped        = "stopped"
+	StatusCleaned        = "cleaned"
+	KitOwnershipCockpit  = "cockpit"
+	KitOwnershipCheckout = "checkout"
 
 	recordVersion = 1
 	maxOutput     = 64 * 1024
@@ -148,8 +150,9 @@ type Command struct {
 // carries at cleanup time, so a re-vendored kit never makes an older
 // workspace look tampered with.
 type KitRecord struct {
-	Revision string            `json:"revision"`
-	Skills   map[string]string `json:"skills"`
+	Revision  string            `json:"revision"`
+	Skills    map[string]string `json:"skills"`
+	Ownership string            `json:"ownership,omitempty"`
 }
 
 // CleanupOptions bounds what Cleanup may discard beyond a clean workspace.
@@ -182,17 +185,18 @@ func (OSRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 }
 
 type Config struct {
-	StateDirectory string
-	NodeID         string
-	TargetHelper   string
-	Runner         Runner
-	Ready          func(string) error
-	ReadyMCP       func(string, string) error
-	LookPath       func(string) (string, error)
-	Now            func() time.Time
-	Random         io.Reader
-	Environment    func() []string
-	OCI            OCIConfig
+	StateDirectory  string
+	SkillsDirectory string
+	NodeID          string
+	TargetHelper    string
+	Runner          Runner
+	Ready           func(string) error
+	ReadyMCP        func(string, string) error
+	LookPath        func(string) (string, error)
+	Now             func() time.Time
+	Random          io.Reader
+	Environment     func() []string
+	OCI             OCIConfig
 }
 
 type OCIConfig struct {
@@ -212,18 +216,19 @@ type ociRuntimeSelection struct {
 }
 
 type Manager struct {
-	stateDirectory string
-	nodeID         string
-	runner         Runner
-	ready          func(string, string) error
-	lookPath       func(string) (string, error)
-	now            func() time.Time
-	random         io.Reader
-	environment    func() []string
-	oci            OCIConfig
-	targetHelper   string
-	consoles       map[string]*consoleProcess
-	mutex          sync.Mutex
+	stateDirectory  string
+	skillsDirectory string
+	nodeID          string
+	runner          Runner
+	ready           func(string, string) error
+	lookPath        func(string) (string, error)
+	now             func() time.Time
+	random          io.Reader
+	environment     func() []string
+	oci             OCIConfig
+	targetHelper    string
+	consoles        map[string]*consoleProcess
+	mutex           sync.Mutex
 }
 
 func New(config Config) (*Manager, error) {
@@ -261,17 +266,18 @@ func New(config Config) (*Manager, error) {
 	}
 	parentEnvironment := config.Environment
 	return &Manager{
-		stateDirectory: config.StateDirectory,
-		nodeID:         config.NodeID,
-		runner:         config.Runner,
-		ready:          config.ReadyMCP,
-		lookPath:       config.LookPath,
-		now:            config.Now,
-		random:         config.Random,
-		environment:    func() []string { return workerEnvironment(parentEnvironment()) },
-		oci:            config.OCI,
-		targetHelper:   targetHelper,
-		consoles:       make(map[string]*consoleProcess),
+		stateDirectory:  config.StateDirectory,
+		skillsDirectory: config.SkillsDirectory,
+		nodeID:          config.NodeID,
+		runner:          config.Runner,
+		ready:           config.ReadyMCP,
+		lookPath:        config.LookPath,
+		now:             config.Now,
+		random:          config.Random,
+		environment:     func() []string { return workerEnvironment(parentEnvironment()) },
+		oci:             config.OCI,
+		targetHelper:    targetHelper,
+		consoles:        make(map[string]*consoleProcess),
 	}, nil
 }
 
@@ -386,15 +392,70 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	} else if _, err := manager.run(ctx, gitPath, source, nil, "worktree", "add", "-b", branch, workspace, baseCommit); err != nil {
 		return manager.fail(record, "Git worktree allocation failed", err)
 	}
-	for _, skillRoot := range []string{
-		filepath.Join(workspace, ".agents", "skills"),
-		filepath.Join(workspace, ".claude", "skills"),
-	} {
-		if _, err := profile.InstallKit(skillRoot); err != nil {
-			return manager.fail(record, "locked worker kit installation failed", err)
+	manifest := profile.LockedManifest()
+	if manager.skillsDirectory != "" {
+		manifest, err = profile.ActiveManifest(manager.skillsDirectory)
+		if err != nil {
+			return manager.fail(record, "active worker kit inspection failed", err)
 		}
 	}
-	record.Kit = kitRecord(profile.LockedManifest())
+	canonicalKit := profile.IsCanonicalRepositorySlug(request.Repository)
+	if canonicalKit {
+		record.Kit = kitRecord(manifest, KitOwnershipCheckout)
+		if err := manager.write(record); err != nil {
+			return manager.fail(record, "canonical worker kit ownership persistence failed", err)
+		}
+		checkoutManifest, checkoutErr := profile.ManifestFromGit(ctx, source, baseCommit)
+		if checkoutErr != nil {
+			return manager.fail(record, "canonical Snowcat skill inspection failed", checkoutErr)
+		}
+		if baseCommit != manifest.Source.Revision {
+			if _, err := manager.run(ctx, gitPath, source, nil, "merge-base", "--is-ancestor", manifest.Source.Revision, baseCommit); err != nil {
+				return manager.fail(
+					record,
+					"canonical Snowcat checkout does not descend from the active worker kit source",
+					ErrNotReady,
+				)
+			}
+		}
+		if !profile.SameSkillContent(manifest, checkoutManifest) {
+			return manager.fail(record, "canonical Snowcat checkout worker kit is not the active revision", ErrNotReady)
+		}
+		err = profile.VerifyDirectory(checkoutManifest, filepath.Join(workspace, ".agents", "skills"))
+		if err != nil {
+			return manager.fail(record, "canonical Snowcat checkout does not match its recorded worker kit", err)
+		}
+	} else {
+		skillRoots := []string{
+			filepath.Join(workspace, ".agents", "skills"),
+			filepath.Join(workspace, ".claude", "skills"),
+		}
+		if manager.skillsDirectory == "" {
+			record.Kit = kitRecord(manifest, KitOwnershipCockpit)
+			if err := manager.write(record); err != nil {
+				return manager.fail(record, "worker kit ownership persistence failed", err)
+			}
+			for _, skillRoot := range skillRoots {
+				if _, err := profile.InstallEmbeddedWorkspaceKit(skillRoot); err != nil {
+					return manager.fail(record, "worker kit installation failed", err)
+				}
+			}
+		} else {
+			prepared, prepareErr := profile.PrepareInstallFromDirectory(manager.skillsDirectory, skillRoots)
+			if prepareErr != nil {
+				return manager.fail(record, "worker kit installation failed", prepareErr)
+			}
+			manifest = prepared.Manifest
+			record.Kit = kitRecord(manifest, KitOwnershipCockpit)
+			if err := manager.write(record); err != nil {
+				return manager.fail(record, "worker kit ownership persistence failed", err)
+			}
+			_, err = prepared.Install()
+			if err != nil {
+				return manager.fail(record, "worker kit installation failed", err)
+			}
+		}
+	}
 	targetHelperCommand := "snowcat-cockpit"
 	if manager.targetHelper != "" {
 		targetHelperCommand, err = installTargetHelper(manager.targetHelper, workspace)
@@ -402,12 +463,12 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 			return manager.fail(record, "worker target helper installation failed", err)
 		}
 	}
-	excludePath, err := manager.writeExcludes(workerID)
+	excludePath, err := manager.writeExcludes(workerID, canonicalKit)
 	if err != nil {
 		return manager.fail(record, "Git exclusion setup failed", err)
 	}
 	if request.Adapter == AdapterOCI {
-		if err := writeOCIExcludes(workspace); err != nil {
+		if err := writeOCIExcludes(workspace, canonicalKit); err != nil {
 			return manager.fail(record, "OCI Git exclusion setup failed", err)
 		}
 	}
@@ -424,14 +485,27 @@ func (manager *Manager) Launch(ctx context.Context, request LaunchRequest) (Reco
 	if manager.targetHelper != "" {
 		hostRelayHelper = filepath.Join(workspace, filepath.FromSlash(targetHelperCommand))
 	}
+	unlockKit := func() {}
+	if manager.skillsDirectory != "" {
+		unlockKit, err = profile.LockKitShared(ctx, manager.skillsDirectory)
+		if err != nil {
+			return manager.fail(record, "worker kit launch lock failed", err)
+		}
+	}
+	if err := manager.verifyKitReady(request, record.Kit.Revision); err != nil {
+		unlockKit()
+		return manager.fail(record, "worker kit readiness changed before launch", err)
+	}
 	launchCommand := hostProviderCommand(request.Provider, request.MCPServer, providerPath, prompt, hostRelayHelper, workerID, workspace)
 	if request.Adapter == AdapterOCI {
 		launchCommand = append([]string{runtimeSelection.Path}, manager.ociArguments(record, runtimeSelection.Image, prompt)...)
 		environment = ociHostEnvironment(environment)
 	}
 	if err := manager.startTmux(ctx, tmuxPath, record, launchCommand, environment); err != nil {
+		unlockKit()
 		return manager.fail(record, "tmux provider launch failed", err)
 	}
+	unlockKit()
 	startedAt := manager.now().UTC()
 	record.Status = StatusRunning
 	record.Detail = request.Adapter + " provider running; terminal and workspace retained"
@@ -610,7 +684,7 @@ func (manager *Manager) Cleanup(ctx context.Context, workerID string, options Cl
 		return Record{}, fmt.Errorf("cleanup requires git: %w", err)
 	}
 	if _, err := os.Stat(record.Workspace); err == nil {
-		excludePath, err := manager.writeExcludes(record.ID)
+		excludePath, err := manager.writeExcludes(record.ID, canonicalKitRecord(record))
 		if err != nil {
 			return Record{}, err
 		}
@@ -1334,7 +1408,7 @@ func (manager *Manager) syncTarget(ctx context.Context, record Record) (Record, 
 	if err != nil {
 		return Record{}, fmt.Errorf("sync worker target requires git: %w", err)
 	}
-	excludePath, err := manager.writeExcludes(record.ID)
+	excludePath, err := manager.writeExcludes(record.ID, canonicalKitRecord(record))
 	if err != nil {
 		return Record{}, err
 	}
@@ -1452,12 +1526,16 @@ func (manager *Manager) excludePath(workerID string) string {
 	return filepath.Join(manager.recordsDirectory(), workerID+".git-excludes")
 }
 
-func (manager *Manager) writeExcludes(workerID string) (string, error) {
+func (manager *Manager) writeExcludes(workerID string, canonicalKit bool) (string, error) {
 	if err := os.MkdirAll(manager.recordsDirectory(), 0o700); err != nil {
 		return "", fmt.Errorf("create worker state directory: %w", err)
 	}
 	path := manager.excludePath(workerID)
-	if err := os.WriteFile(path, []byte("/.agents/\n/.claude/\n"), 0o600); err != nil {
+	patterns := "/.agents/\n/.claude/\n"
+	if canonicalKit {
+		patterns = canonicalPrivateExclusions()
+	}
+	if err := os.WriteFile(path, []byte(patterns), 0o600); err != nil {
 		return "", fmt.Errorf("write worker Git exclusions: %w", err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
@@ -1466,14 +1544,34 @@ func (manager *Manager) writeExcludes(workerID string) (string, error) {
 	return path, nil
 }
 
-func writeOCIExcludes(workspace string) error {
+func canonicalPrivateExclusions() string {
+	return strings.Join([]string{
+		"/.agents/bin/snowcat-cockpit",
+		"/.agents/bin/.snowcat-cockpit-*",
+		"/.agents/cockpit-lifecycle.json",
+		"/.agents/.cockpit-lifecycle-*",
+		"/.agents/cockpit-target.json",
+		"/.agents/.cockpit-target-*.json",
+		"",
+	}, "\n")
+}
+
+func canonicalKitRecord(record Record) bool {
+	return record.Kit != nil && record.Kit.Ownership == KitOwnershipCheckout
+}
+
+func writeOCIExcludes(workspace string, canonicalKit bool) error {
 	path := filepath.Join(workspace, ".git", "info", "exclude")
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		return fmt.Errorf("open private Git exclusions: %w", err)
 	}
 	defer file.Close()
-	if _, err := io.WriteString(file, "\n/.agents/\n/.claude/\n"); err != nil {
+	patterns := "\n/.agents/\n/.claude/\n"
+	if canonicalKit {
+		patterns = "\n" + canonicalPrivateExclusions()
+	}
+	if _, err := io.WriteString(file, patterns); err != nil {
 		return fmt.Errorf("write private Git exclusions: %w", err)
 	}
 	return nil
@@ -1621,12 +1719,12 @@ func validateRecord(record Record) error {
 	return nil
 }
 
-func kitRecord(manifest profile.Manifest) *KitRecord {
+func kitRecord(manifest profile.Manifest, ownership string) *KitRecord {
 	skills := make(map[string]string, len(manifest.Skills))
 	for _, skill := range manifest.Skills {
 		skills[skill.Name] = skill.SHA256
 	}
-	return &KitRecord{Revision: manifest.Source.Revision, Skills: skills}
+	return &KitRecord{Revision: manifest.Source.Revision, Skills: skills, Ownership: ownership}
 }
 
 // removeOwnedSkills deletes the Cockpit-owned skill files a worker was given.
@@ -1635,6 +1733,9 @@ func kitRecord(manifest profile.Manifest) *KitRecord {
 // other content is drift: refused unless the caller discards it explicitly,
 // in which case the skill names are returned for the record.
 func removeOwnedSkills(record Record, options CleanupOptions) ([]string, error) {
+	if canonicalKitRecord(record) {
+		return nil, nil
+	}
 	manifest := profile.LockedManifest()
 	expected := make(map[string]string, len(manifest.Skills))
 	for _, skill := range manifest.Skills {
@@ -1645,10 +1746,15 @@ func removeOwnedSkills(record Record, options CleanupOptions) ([]string, error) 
 			expected[name] = digest
 		}
 	}
+	names := make([]string, 0, len(expected))
+	for name := range expected {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	drifted := []string{}
 	for _, providerRoot := range []string{".agents", ".claude"} {
-		for _, skill := range manifest.Skills {
-			path := filepath.Join(record.Workspace, providerRoot, "skills", skill.Name, "SKILL.md")
+		for _, name := range names {
+			path := filepath.Join(record.Workspace, providerRoot, "skills", name, "SKILL.md")
 			content, err := os.ReadFile(path)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -1657,11 +1763,11 @@ func removeOwnedSkills(record Record, options CleanupOptions) ([]string, error) 
 				return nil, fmt.Errorf("inspect Cockpit-owned skill before cleanup: %w", err)
 			}
 			digest := sha256.Sum256(content)
-			if hex.EncodeToString(digest[:]) != expected[skill.Name] {
+			if hex.EncodeToString(digest[:]) != expected[name] {
 				if !options.DiscardDriftedSkills {
-					return nil, fmt.Errorf("%w: Cockpit-owned skill path drifted (%s/skills/%s); rerun with --discard-drifted-skills to discard it", ErrConflict, providerRoot, skill.Name)
+					return nil, fmt.Errorf("%w: Cockpit-owned skill path drifted (%s/skills/%s); rerun with --discard-drifted-skills to discard it", ErrConflict, providerRoot, name)
 				}
-				drifted = append(drifted, providerRoot+"/skills/"+skill.Name)
+				drifted = append(drifted, providerRoot+"/skills/"+name)
 			}
 			if err := os.Remove(path); err != nil {
 				return nil, fmt.Errorf("remove Cockpit-owned skill: %w", err)
@@ -1672,6 +1778,31 @@ func removeOwnedSkills(record Record, options CleanupOptions) ([]string, error) 
 		_ = os.Remove(filepath.Join(record.Workspace, providerRoot))
 	}
 	return drifted, nil
+}
+
+func (manager *Manager) verifyKitReady(request LaunchRequest, revision string) error {
+	if manager.skillsDirectory != "" {
+		before, err := profile.ActiveManifest(manager.skillsDirectory)
+		if err != nil {
+			return fmt.Errorf("%w: inspect active worker kit: %v", ErrNotReady, err)
+		}
+		if before.Source.Revision != revision {
+			return fmt.Errorf("%w: prepared worker kit %s is not the active revision %s", ErrNotReady, revision, before.Source.Revision)
+		}
+	}
+	if err := manager.ready(request.Provider, request.MCPServer); err != nil {
+		return fmt.Errorf("%w: %v", ErrNotReady, err)
+	}
+	if manager.skillsDirectory != "" {
+		after, err := profile.ActiveManifest(manager.skillsDirectory)
+		if err != nil {
+			return fmt.Errorf("%w: inspect active worker kit after readiness: %v", ErrNotReady, err)
+		}
+		if after.Source.Revision != revision {
+			return fmt.Errorf("%w: active worker kit changed from prepared revision %s to %s", ErrNotReady, revision, after.Source.Revision)
+		}
+	}
+	return nil
 }
 
 type limitedBuffer struct {

@@ -695,13 +695,13 @@ func executePreflight(ctx context.Context, execution preflightExecution, runner 
 		return state.PreflightReceipt{}, "", fmt.Errorf("create preflight workspace: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(workspace) }()
-	for _, providerSkills := range []string{
+	providerSkills := []string{
 		filepath.Join(workspace, ".agents", "skills"),
 		filepath.Join(workspace, ".claude", "skills"),
-	} {
-		if _, err := profile.InstallKit(providerSkills); err != nil {
-			return state.PreflightReceipt{}, "", fmt.Errorf("seed preflight worker kit: %w", err)
-		}
+	}
+	_, servedKit, err := profile.InstallFromDirectoryTargets(execution.SkillsDirectory, providerSkills)
+	if err != nil {
+		return state.PreflightReceipt{}, "", fmt.Errorf("seed preflight worker kit: %w", err)
 	}
 	checkedAt := time.Now().UTC()
 	result := preflight.Run(ctx, execution.Provider, execution.MCPServer, execution.Repository, workspace, runner)
@@ -716,7 +716,7 @@ func executePreflight(ctx context.Context, execution preflightExecution, runner 
 		Detail:      result.Detail,
 		CheckedAt:   checkedAt,
 		ExpiresAt:   expiresAt,
-		KitRevision: profile.LockedManifest().Source.Revision,
+		KitRevision: servedKit.Source.Revision,
 	}
 	if err := state.WritePreflight(execution.StateDirectory, receipt); err != nil {
 		return state.PreflightReceipt{}, "", fmt.Errorf("write preflight receipt: %w", err)
@@ -776,7 +776,7 @@ func runNodeUp(args []string, stdout, stderr io.Writer, service nodeUpService, e
 		Config: config, ConfigPath: resolvedConfig, Executable: executablePath, Version: version,
 		InstallRoot: *installRoot, UnitDirectory: *unitDirectory,
 		Ambient: captureNodeServiceEnvironment(lookupEnv), DryRun: *dryRun,
-		Doctor: doctor.Run, Inspect: profile.Inspect, InstallKit: profile.InstallKit,
+		Doctor: doctor.Run, Inspect: profile.Inspect, InstallKit: profile.InstallKit, RefreshKit: profile.RefreshKitFromGit,
 		Plan: nodeservice.PlanInstall, Service: service, Node: nodeup.NewHTTPClient(config.Listen),
 		Preflight: func(ctx context.Context, request nodeup.PreflightRequest) (state.PreflightReceipt, error) {
 			bounded, cancel := context.WithTimeout(ctx, *timeout)
@@ -787,7 +787,7 @@ func runNodeUp(args []string, stdout, stderr io.Writer, service nodeUpService, e
 			}, preflight.OSRunner{})
 			return receipt, err
 		},
-		ReadPreflights: state.ReadPreflights, KitRevision: profile.LockedManifest().Source.Revision,
+		ReadPreflights: state.ReadPreflights,
 	}
 	if !*jsonOutput {
 		runner.Observe = func(step nodeup.Step) {
@@ -1056,13 +1056,13 @@ func (service *campaignPreflighter) Refresh(ctx context.Context, providerID, mcp
 		return campaign.PreflightResult{}, fmt.Errorf("create provider preflight workspace: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(workspace) }()
-	for _, providerSkills := range []string{
+	providerSkills := []string{
 		filepath.Join(workspace, ".agents", "skills"),
 		filepath.Join(workspace, ".claude", "skills"),
-	} {
-		if _, err := profile.InstallKit(providerSkills); err != nil {
-			return campaign.PreflightResult{}, fmt.Errorf("seed provider preflight skills: %w", err)
-		}
+	}
+	_, servedKit, err := profile.InstallFromDirectoryTargets(service.skillsDirectory, providerSkills)
+	if err != nil {
+		return campaign.PreflightResult{}, fmt.Errorf("seed provider preflight skills: %w", err)
 	}
 
 	var last campaign.PreflightResult
@@ -1078,7 +1078,7 @@ func (service *campaignPreflighter) Refresh(ctx context.Context, providerID, mcp
 		receipt := state.PreflightReceipt{
 			Provider: result.Provider, MCPServer: mcpServer, Status: result.Status,
 			Detail: result.Detail, CheckedAt: checkedAt, ExpiresAt: expiresAt,
-			KitRevision: profile.LockedManifest().Source.Revision,
+			KitRevision: servedKit.Source.Revision,
 		}
 		if err := state.WritePreflight(service.stateDirectory, receipt); err != nil {
 			return campaign.PreflightResult{}, fmt.Errorf("write provider preflight receipt: %w", err)
@@ -1176,9 +1176,10 @@ func newWorkerManagerWithNode(stateDirectory, skillsDirectory string, nodeState 
 		return nil, fmt.Errorf("resolve Cockpit target helper: %w", err)
 	}
 	return worker.New(worker.Config{
-		StateDirectory: stateDirectory,
-		NodeID:         nodeState.NodeID,
-		TargetHelper:   targetHelper,
+		StateDirectory:  stateDirectory,
+		SkillsDirectory: skillsDirectory,
+		NodeID:          nodeState.NodeID,
+		TargetHelper:    targetHelper,
 		OCI: worker.OCIConfig{
 			Images: map[string]string{
 				"codex":   firstNonempty(os.Getenv("SNOWCAT_COCKPIT_OCI_CODEX_IMAGE"), os.Getenv("SNOWCAT_COCKPIT_OCI_IMAGE")),

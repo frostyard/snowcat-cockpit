@@ -158,103 +158,43 @@ func buildRoles() []Role {
 }
 
 func Inspect(skillsDirectory string) Snapshot {
-	return inspectWithPreflights(mustManifest(), skillsDirectory, exec.LookPath, nil, time.Now().UTC())
+	manifest, selectedDirectory, err := activeManifestAndDirectory(skillsDirectory)
+	if err != nil {
+		return failedManifestSnapshot(skillsDirectory, err)
+	}
+	return inspectWithPreflights(manifest, selectedDirectory, exec.LookPath, nil, time.Now().UTC())
 }
 
 func InspectWithPreflights(skillsDirectory string, receipts map[string]PreflightReceipt, now time.Time) Snapshot {
-	return inspectWithPreflights(mustManifest(), skillsDirectory, exec.LookPath, receipts, now)
+	manifest, selectedDirectory, err := activeManifestAndDirectory(skillsDirectory)
+	if err != nil {
+		return failedManifestSnapshot(skillsDirectory, err)
+	}
+	return inspectWithPreflights(manifest, selectedDirectory, exec.LookPath, receipts, now)
 }
 
 func LockedManifest() Manifest {
 	return mustManifest()
 }
 
-// InstallKit materializes the embedded, locked worker kit without replacing
-// any existing file. A conflicting file is reported as drift and left intact.
+// InstallKit materializes the embedded offline-floor worker kit without
+// replacing any existing file. A conflicting file is drift and left intact.
 func InstallKit(skillsDirectory string) (InstallResult, error) {
-	result := InstallResult{Directory: skillsDirectory, Status: StatusReady}
-	if skillsDirectory == "" {
-		return result, fmt.Errorf("worker kit directory is not configured")
+	bundle, err := embeddedBundle()
+	if err != nil {
+		return InstallResult{Directory: skillsDirectory}, err
 	}
+	return installBundle(bundle, skillsDirectory, true)
+}
 
-	manifest := mustManifest()
-	type payload struct {
-		locked LockedSkill
-		bytes  []byte
-		path   string
+// InstallEmbeddedWorkspaceKit installs the offline-floor bytes into an
+// ephemeral workspace without turning that workspace into an active-kit cache.
+func InstallEmbeddedWorkspaceKit(skillsDirectory string) (InstallResult, error) {
+	bundle, err := embeddedBundle()
+	if err != nil {
+		return InstallResult{Directory: skillsDirectory}, err
 	}
-	payloads := make([]payload, 0, len(manifest.Skills))
-	for _, skill := range manifest.Skills {
-		content, err := workerKit.ReadFile(filepath.ToSlash(filepath.Join("worker-kit", skill.Name, "SKILL.md")))
-		if err != nil {
-			return result, fmt.Errorf("read embedded skill %s: %w", skill.Name, err)
-		}
-		digest := sha256.Sum256(content)
-		if hex.EncodeToString(digest[:]) != skill.SHA256 {
-			return result, fmt.Errorf("embedded skill %s does not match worker kit lock", skill.Name)
-		}
-		payloads = append(payloads, payload{
-			locked: skill,
-			bytes:  content,
-			path:   filepath.Join(skillsDirectory, skill.Name, "SKILL.md"),
-		})
-	}
-
-	// Refuse the whole operation before writing if any existing skill drifts.
-	for _, item := range payloads {
-		digest, err := fileDigest(item.path)
-		if errorsIsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return result, fmt.Errorf("inspect existing skill %s: %w", item.locked.Name, err)
-		}
-		if digest != item.locked.SHA256 {
-			result.Status = StatusDrifted
-			result.Checks = append(result.Checks, SkillCheck{
-				Name: item.locked.Name, Status: StatusDrifted,
-				Detail: "existing file differs; left unchanged",
-			})
-			return result, fmt.Errorf("refusing to replace drifted skill %s", item.locked.Name)
-		}
-	}
-
-	if err := os.MkdirAll(skillsDirectory, 0o700); err != nil {
-		return result, fmt.Errorf("create worker kit directory: %w", err)
-	}
-	for _, item := range payloads {
-		if digest, err := fileDigest(item.path); err == nil && digest == item.locked.SHA256 {
-			result.Checks = append(result.Checks, SkillCheck{
-				Name: item.locked.Name, Status: StatusReady, Detail: "already matches the locked revision",
-			})
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(item.path), 0o700); err != nil {
-			return result, fmt.Errorf("create skill directory %s: %w", item.locked.Name, err)
-		}
-		file, err := os.OpenFile(item.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
-			return result, fmt.Errorf("create skill %s: %w", item.locked.Name, err)
-		}
-		writeErr := func() error {
-			if _, err := file.Write(item.bytes); err != nil {
-				return err
-			}
-			return file.Sync()
-		}()
-		closeErr := file.Close()
-		if writeErr != nil || closeErr != nil {
-			_ = os.Remove(item.path)
-			if writeErr != nil {
-				return result, fmt.Errorf("write skill %s: %w", item.locked.Name, writeErr)
-			}
-			return result, fmt.Errorf("close skill %s: %w", item.locked.Name, closeErr)
-		}
-		result.Checks = append(result.Checks, SkillCheck{
-			Name: item.locked.Name, Status: StatusReady, Detail: "installed from the locked worker kit",
-		})
-	}
-	return result, nil
+	return installBundle(bundle, skillsDirectory, false)
 }
 
 func WriteJSON(output io.Writer, snapshot Snapshot) error {
@@ -292,6 +232,19 @@ func WriteText(output io.Writer, snapshot Snapshot) {
 
 func inspect(manifest Manifest, skillsDirectory string, lookPath func(string) (string, error)) Snapshot {
 	return inspectWithPreflights(manifest, skillsDirectory, lookPath, nil, time.Now().UTC())
+}
+
+func failedManifestSnapshot(skillsDirectory string, err error) Snapshot {
+	manifest := mustManifest()
+	snapshot := inspectWithPreflights(manifest, skillsDirectory, exec.LookPath, nil, time.Now().UTC())
+	snapshot.Status = StatusMissing
+	snapshot.Kit.Status = StatusDrifted
+	snapshot.Kit.Detail = err.Error()
+	for index := range snapshot.Providers {
+		snapshot.Providers[index].SkillKit = Check{Status: StatusDrifted, Detail: err.Error(), Action: "Repair the active worker kit manifest, then check profiles again."}
+		snapshot.Providers[index].Status = StatusMissing
+	}
+	return snapshot
 }
 
 func inspectWithPreflights(manifest Manifest, skillsDirectory string, lookPath func(string) (string, error), receipts map[string]PreflightReceipt, now time.Time) Snapshot {

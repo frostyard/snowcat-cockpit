@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/frostyard/snowcat-cockpit/internal/profile"
 )
 
 type fakeRunner struct {
@@ -32,6 +34,7 @@ type fakeRunner struct {
 	dockerSecurity string
 	currentBranch  string
 	currentHead    string
+	ancestorErr    error
 	pinFiles       map[string]string
 	provisionFails bool
 	provisionRuns  int
@@ -181,6 +184,9 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 			return nil, err
 		}
 		for name, content := range runner.pinFiles {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(runner.workspace, name)), 0o700); err != nil {
+				return nil, err
+			}
 			if err := os.WriteFile(filepath.Join(runner.workspace, name), []byte(content), 0o600); err != nil {
 				return nil, err
 			}
@@ -199,6 +205,15 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 		runner.workspace = command.Arguments[len(command.Arguments)-2]
 		if err := os.MkdirAll(runner.workspace, 0o700); err != nil {
 			return nil, err
+		}
+		for name, content := range runner.pinFiles {
+			path := filepath.Join(runner.workspace, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				return nil, err
+			}
 		}
 		return nil, nil
 	case strings.Contains(arguments, "info\x00--format\x00{{.Host.Security.Rootless}}"):
@@ -250,7 +265,7 @@ func (runner *fakeRunner) Run(_ context.Context, command Command) ([]byte, error
 	case arguments == "branch\x00--show-current":
 		return []byte(runner.currentBranch + "\n"), nil
 	case strings.Contains(arguments, "merge-base\x00--is-ancestor"):
-		return nil, nil
+		return nil, runner.ancestorErr
 	case strings.Contains(arguments, "worktree\x00remove"):
 		return nil, os.RemoveAll(command.Arguments[len(command.Arguments)-1])
 	default:
@@ -371,6 +386,402 @@ func TestManagedWorkerLifecyclePreservesSecretsAndWorkspaceUntilCleanup(t *testi
 	if _, err := os.Stat(manager.recordPath(record.ID)); err != nil {
 		t.Fatalf("cleaned lifecycle record was not retained: %v", err)
 	}
+}
+
+func TestManagedWorkerCopiesTheActiveSourceBackedKit(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	kitSource := filepath.Join(root, "snowcat-kit-source")
+	contents := testWorkerKitContents("source-backed")
+	revision := commitWorkerKit(t, kitSource, contents)
+	active := filepath.Join(root, "active-kit")
+	if _, err := profile.InstallKit(active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profile.RefreshKitFromGit(context.Background(), kitSource, revision, active, time.Date(2026, 8, 26, 1, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("a", 40)}
+	manager, err := New(Config{
+		StateDirectory:  filepath.Join(root, "state"),
+		SkillsDirectory: active,
+		NodeID:          "node-source-backed-kit",
+		Runner:          runner,
+		Ready:           func(string) error { return nil },
+		LookPath:        func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:          bytes.NewReader([]byte("kit-copy")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Provider: "codex", Role: "implementer", Repository: "frostyard/firn", Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Kit == nil || record.Kit.Revision != revision || record.Kit.Ownership != KitOwnershipCockpit {
+		t.Fatalf("worker kit record = %#v", record.Kit)
+	}
+	firstSkill := profile.LockedManifest().Skills[0].Name
+	copied, err := os.ReadFile(filepath.Join(record.Workspace, ".agents", "skills", firstSkill, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(copied) != contents[firstSkill] {
+		t.Fatalf("copied skill = %q, want %q", copied, contents[firstSkill])
+	}
+}
+
+func TestManagedSnowcatWorkerUsesCanonicalCheckoutSkills(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "snowcat")
+	contents := testWorkerKitContents("canonical-checkout")
+	revision := commitWorkerKit(t, source, contents)
+	active := filepath.Join(root, "active-kit")
+	if _, err := profile.InstallKit(active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profile.RefreshKitFromGit(context.Background(), source, revision, active, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	pins := make(map[string]string, len(contents))
+	for name, content := range contents {
+		pins[filepath.Join(".agents", "skills", name, "SKILL.md")] = content
+	}
+	runner := &fakeRunner{source: source, baseCommit: revision, pinFiles: pins}
+	manager, err := New(Config{
+		StateDirectory:  filepath.Join(root, "state"),
+		SkillsDirectory: active,
+		NodeID:          "node-canonical-kit",
+		Runner:          runner,
+		Ready:           func(string) error { return nil },
+		LookPath:        func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:          bytes.NewReader([]byte("canonical")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Provider: "claude", Role: "implementer", Repository: "frostyard/snowcat", Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Kit == nil || record.Kit.Revision != revision || record.Kit.Ownership != KitOwnershipCheckout {
+		t.Fatalf("canonical kit record = %#v", record.Kit)
+	}
+	if _, err := os.Stat(filepath.Join(record.Workspace, ".claude", "skills", profile.LockedManifest().Skills[0].Name, "SKILL.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Cockpit installed over canonical checkout aliases: %v", err)
+	}
+	excludes, err := os.ReadFile(manager.excludePath(record.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(excludes) != canonicalPrivateExclusions() {
+		t.Fatalf("canonical Git exclusions = %q", excludes)
+	}
+	if !strings.Contains(string(excludes), "/.agents/bin/.snowcat-cockpit-*") {
+		t.Fatalf("canonical exclusions do not cover interrupted helper installation: %q", excludes)
+	}
+}
+
+func TestManagedSnowcatWorkerAllowsNewCheckoutCommitWithUnchangedSkills(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "snowcat")
+	contents := testWorkerKitContents("unchanged-skills")
+	kitRevision := commitWorkerKit(t, source, contents)
+	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("new non-skill commit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runWorkerGit(t, source, "add", "README.md")
+	runWorkerGit(t, source, "commit", "-q", "-m", "change non-skill content")
+	checkoutRevision := strings.TrimSpace(runWorkerGit(t, source, "rev-parse", "HEAD"))
+
+	active := filepath.Join(root, "active-kit")
+	if _, err := profile.InstallKit(active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profile.RefreshKitFromGit(context.Background(), source, kitRevision, active, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	pins := make(map[string]string, len(contents))
+	for name, content := range contents {
+		pins[filepath.Join(".agents", "skills", name, "SKILL.md")] = content
+	}
+	runner := &fakeRunner{source: source, baseCommit: checkoutRevision, pinFiles: pins}
+	manager, err := New(Config{
+		StateDirectory:  filepath.Join(root, "state"),
+		SkillsDirectory: active,
+		NodeID:          "node-canonical-new-base",
+		Runner:          runner,
+		Ready:           func(string) error { return nil },
+		LookPath:        func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:          bytes.NewReader([]byte("new-base")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Provider: "codex", Role: "implementer", Repository: "frostyard/snowcat", Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.BaseCommit != checkoutRevision || record.Kit == nil || record.Kit.Revision != kitRevision {
+		t.Fatalf("record = %#v", record)
+	}
+}
+
+func TestManagedSnowcatWorkerRejectsOlderCheckoutWithUnchangedSkills(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "snowcat")
+	contents := testWorkerKitContents("same-skills")
+	olderRevision := commitWorkerKit(t, source, contents)
+	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("newer active commit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runWorkerGit(t, source, "add", "README.md")
+	runWorkerGit(t, source, "commit", "-q", "-m", "advance active source")
+	activeRevision := strings.TrimSpace(runWorkerGit(t, source, "rev-parse", "HEAD"))
+	active := filepath.Join(root, "active-kit")
+	if _, err := profile.InstallKit(active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profile.RefreshKitFromGit(context.Background(), source, activeRevision, active, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	pins := make(map[string]string, len(contents))
+	for name, content := range contents {
+		pins[filepath.Join(".agents", "skills", name, "SKILL.md")] = content
+	}
+	runner := &fakeRunner{
+		source: source, baseCommit: olderRevision, pinFiles: pins,
+		ancestorErr: errors.New("not an ancestor"),
+	}
+	manager, err := New(Config{
+		StateDirectory:  filepath.Join(root, "state"),
+		SkillsDirectory: active,
+		NodeID:          "node-canonical-older-base",
+		Runner:          runner,
+		Ready:           func(string) error { return nil },
+		LookPath:        func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:          bytes.NewReader([]byte("old-base")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Provider: "codex", Role: "implementer", Repository: "frostyard/snowcat", Source: source,
+	})
+	if !errors.Is(err, ErrNotReady) || record.Status != StatusFailed || runner.session {
+		t.Fatalf("record = %#v error = %v", record, err)
+	}
+}
+
+func TestLegacySnowcatRecordKeepsCockpitOwnedSkillCleanup(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	for _, root := range []string{".agents", ".claude"} {
+		if _, err := profile.InstallEmbeddedWorkspaceKit(filepath.Join(workspace, root, "skills")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := Record{
+		Repository: "frostyard/snowcat",
+		Workspace:  workspace,
+		Kit:        kitRecord(profile.LockedManifest(), ""),
+	}
+	if canonicalKitRecord(record) {
+		t.Fatal("legacy Snowcat record was reclassified as checkout-owned")
+	}
+	if _, err := removeOwnedSkills(record, CleanupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	firstSkill := profile.LockedManifest().Skills[0].Name
+	if _, err := os.Stat(filepath.Join(workspace, ".claude", "skills", firstSkill, "SKILL.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy Cockpit-owned skill remains: %v", err)
+	}
+}
+
+func TestManagedWorkerRefusesKitRevisionChangeBeforeLaunch(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	firstSource := filepath.Join(root, "snowcat-first")
+	firstRevision := commitWorkerKit(t, firstSource, testWorkerKitContents("first"))
+	secondSource := filepath.Join(root, "snowcat-second")
+	secondRevision := commitWorkerKit(t, secondSource, testWorkerKitContents("second"))
+	active := filepath.Join(root, "active-kit")
+	if _, err := profile.InstallKit(active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profile.RefreshKitFromGit(context.Background(), firstSource, firstRevision, active, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profile.RefreshKitFromGit(context.Background(), secondSource, secondRevision, active, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	firstSelection := filepath.Join(active, ".active-first")
+	if err := os.Symlink(filepath.Join(".generations", firstRevision), firstSelection); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(firstSelection, filepath.Join(active, ".active")); err != nil {
+		t.Fatal(err)
+	}
+
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{source: source, baseCommit: strings.Repeat("a", 40)}
+	readyCalls := 0
+	manager, err := New(Config{
+		StateDirectory:  filepath.Join(root, "state"),
+		SkillsDirectory: active,
+		NodeID:          "node-kit-race",
+		Runner:          runner,
+		Ready: func(string) error {
+			readyCalls++
+			if readyCalls == 2 {
+				nextSelection := filepath.Join(active, ".active-next")
+				if err := os.Symlink(filepath.Join(".generations", secondRevision), nextSelection); err != nil {
+					return err
+				}
+				return os.Rename(nextSelection, filepath.Join(active, ".active"))
+			}
+			return nil
+		},
+		LookPath: func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:   bytes.NewReader([]byte("kit-race")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Provider: "codex", Role: "implementer", Repository: "frostyard/firn", Source: source,
+	})
+	if !errors.Is(err, ErrNotReady) || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("launch error = %v", err)
+	}
+	if runner.session {
+		t.Fatal("worker launched after its prepared kit revision lost readiness")
+	}
+	if record.Status != StatusFailed || record.Kit == nil || record.Kit.Revision != firstRevision {
+		t.Fatalf("failed record = %#v", record)
+	}
+}
+
+func TestFailedCanonicalLaunchRetainsCheckoutOwnership(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "snowcat")
+	contents := testWorkerKitContents("partial")
+	delete(contents, profile.LockedManifest().Skills[1].Name)
+	revision := commitWorkerKit(t, source, contents)
+	pins := make(map[string]string, len(contents))
+	for name, content := range contents {
+		pins[filepath.Join(".agents", "skills", name, "SKILL.md")] = content
+	}
+	runner := &fakeRunner{source: source, baseCommit: revision, pinFiles: pins}
+	manager, err := New(Config{
+		StateDirectory: filepath.Join(root, "state"),
+		NodeID:         "node-canonical-failure",
+		Runner:         runner,
+		Ready:          func(string) error { return nil },
+		LookPath:       func(name string) (string, error) { return "/tools/" + name, nil },
+		Random:         bytes.NewReader([]byte("canonbad")),
+		Environment: func() []string {
+			return []string{"PATH=/tools", "SNOWCAT_MCP_URL=https://snowcat.invalid/mcp", "SNOWCAT_MCP_TOKEN=worker-secret"}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.Launch(context.Background(), LaunchRequest{
+		Provider: "codex", Role: "implementer", Repository: "frostyard/snowcat", Source: source,
+	})
+	if err == nil || record.Status != StatusFailed || record.Kit == nil || record.Kit.Ownership != KitOwnershipCheckout {
+		t.Fatalf("launch record = %#v error = %v", record, err)
+	}
+	if _, err := removeOwnedSkills(record, CleanupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	firstSkill := profile.LockedManifest().Skills[0].Name
+	if _, err := os.Stat(filepath.Join(record.Workspace, ".agents", "skills", firstSkill, "SKILL.md")); err != nil {
+		t.Fatalf("canonical checkout skill was removed: %v", err)
+	}
+}
+
+func testWorkerKitContents(marker string) map[string]string {
+	contents := make(map[string]string, len(profile.LockedManifest().Skills))
+	for _, skill := range profile.LockedManifest().Skills {
+		contents[skill.Name] = "---\nname: " + skill.Name +
+			"\ndescription: Test worker kit skill.\n---\n\n# " + skill.Name + "\n\n" + marker + "\n"
+	}
+	return contents
+}
+
+func commitWorkerKit(t *testing.T, repository string, contents map[string]string) string {
+	t.Helper()
+	runWorkerGit(t, "", "init", "-q", repository)
+	runWorkerGit(t, repository, "config", "user.name", "Cockpit Test")
+	runWorkerGit(t, repository, "config", "user.email", "cockpit-test@example.invalid")
+	for name, content := range contents {
+		path := filepath.Join(repository, ".agents", "skills", name, "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runWorkerGit(t, repository, "add", ".agents/skills")
+	runWorkerGit(t, repository, "commit", "-q", "-m", "test worker kit")
+	return strings.TrimSpace(runWorkerGit(t, repository, "rev-parse", "HEAD"))
+}
+
+func runWorkerGit(t *testing.T, directory string, arguments ...string) string {
+	t.Helper()
+	commandArguments := arguments
+	if directory != "" {
+		commandArguments = append([]string{"-C", directory}, arguments...)
+	}
+	command := exec.Command("git", commandArguments...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", commandArguments, err, output)
+	}
+	return string(output)
 }
 
 func TestManagerPersistsPreparedPullRequestTarget(t *testing.T) {

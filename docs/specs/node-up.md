@@ -96,10 +96,10 @@ result.
 1. **doctor** — MUST fail when a required tool is missing, when the `oci`
    runtime's tool is missing, or when a `host` lane's provider executable is
    missing.
-2. **kit** — MUST install the embedded worker kit into
+2. **kit** — MUST install the embedded offline-floor worker kit into
    `<stateDirectory>/worker-kit` when it is missing; MUST move a drifted kit
-   aside to `worker-kit.pre-<version>.<UTC timestamp>` and install fresh; MUST
-   NOT delete anything; MUST leave a ready kit untouched.
+   aside to `worker-kit.pre-<version>.<UTC timestamp>` and install the floor;
+   MUST NOT delete anything; MUST leave a ready active kit untouched.
 3. **install** — MUST compute the node-service install plan (release ID and
    rendered `service.env`) for the configuration and MUST skip the install
    when the install record exists, is healthy, and matches the plan's release,
@@ -111,16 +111,22 @@ result.
    the running node's loopback API with concurrency at most four, report each
    repository's status and pinned base commit, continue past a failed setup,
    and fail only when no repository is ready.
-5. **preflight** — for each distinct provider/MCP-server pair the lanes use,
+5. **source-kit** — when `frostyard/snowcat` is declared and its setup is
+   `ready`, MUST derive and atomically select the active worker kit from that
+   exact prepared commit without moving the source checkout. A source lookup
+   failure MUST retain the last-good active kit and report `skipped`; invalid
+   active state or an invalid source kit MUST fail visibly. When Snowcat is not
+   declared or its setup failed, the active kit remains unchanged.
+6. **preflight** — for each distinct provider/MCP-server pair the lanes use,
    MUST reuse a `ready` receipt whose MCP server matches, whose kit revision
-   is the embedded lock's, and which has not expired; otherwise MUST run the
+   is the active kit's, and which has not expired; otherwise MUST run the
    provider preflight contract with the first declared repository as the
    filter, retrying once, and MUST fail before the campaign step when any
    provider still lacks a live proof.
-6. **campaign** — MUST leave a `starting`, `running`, `degraded`, or
+7. **campaign** — MUST leave a `starting`, `running`, `degraded`, or
    `stopping` campaign in place and MUST otherwise start one from the derived
    request.
-7. **status** — MUST verify node health and report the dashboard URL.
+8. **status** — MUST verify node health and report the dashboard URL.
 
 ## Rules
 
@@ -131,7 +137,7 @@ result.
 - Re-running `node up` against an unchanged configuration on a healthy node
   with an active campaign changes nothing and exits 0.
 - `--dry-run` MUST perform only the doctor and kit inspections and MUST report
-  what steps 2–7 would do.
+  what steps 2–8 would do.
 - `node up` MUST NOT read, copy, print, or store any credential; it passes
   credential file paths to the node service contract exactly as `node install`
   does and relies on its posture checks.
