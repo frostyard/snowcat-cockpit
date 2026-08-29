@@ -135,32 +135,25 @@ Delegate=yes
 | Unit `ExecStart` | Atomic `current` selection plus explicit serve arguments |
 | Service environment | Fixed non-secret allowlist plus observer and worker credential paths |
 
-## Upgrading across a worker-kit change
+## Refreshing the worker kit
 
-A release whose embedded worker kit (`internal/profile/worker-kit`,
-`worker-kit.lock.json`) differs from the installed one MUST be rolled out as
-one `node up` run against the declared configuration ([node-up.md](node-up.md)).
-That run performs, in order, exactly the steps that were observed to fail
-when skipped on 2026-08-24 (snowcat-cockpit#5):
+The embedded kit (`internal/profile/worker-kit`,
+`worker-kit.lock.json`) is the permanent offline floor, not the ordinary
+upgrade mechanism. One `node up` run against the declared configuration
+([node-up.md](node-up.md)) prepares managed repositories and then derives the
+active kit from the exact prepared `frostyard/snowcat` commit. The complete new
+immutable generation is selected by one atomic `.active` symlink replacement;
+the prior generation and root offline floor remain as last-good copies. The
+selection takes an exclusive host-local kit lock; a worker holds the shared
+side from its final revision check through provider start.
 
-1. Move the node's drifted kit directory (`<state-dir>/worker-kit`) aside and
-   install the embedded kit at the new revision; `InstallKit` refuses to
-   overwrite drifted skills, so the old directory is retained, never deleted.
-2. Reinstall the service from the configuration's paths and image pins (the
-   install record and rendered `service.env` differ from the plan). The
-   restart this performs **stops any running board campaign**; managed
-   workers and workspaces are retained.
-3. Re-run the provider preflight for every provider a lane uses: receipts are
-   bound to the kit revision, every provider reads "not structurally ready"
-   until then, and a campaign that refreshes first backs the provider off for
-   five minutes.
-4. Start the campaign again from the declared lanes once every lane's
-   provider is `ready`.
-
-A Snowcat skill change therefore always costs a Cockpit release plus one
-`node up` before the snowcat lane (whose checkout carries the canonical
-skills) launches again; Snowcat's repository tooling rollout plan tracks
-removing that coupling.
+A Snowcat skill change therefore requires no Cockpit release. Existing workers
+retain the revision recorded on their lifecycle record; new non-Snowcat
+workers receive the refreshed active kit; and a Snowcat worker uses its
+canonical prepared checkout without Cockpit installing over tracked skills.
+Provider preflight receipts are bound to the actually served revision and are
+renewed before new launches rely on it. If the managed source bytes are
+temporarily unavailable, `node up` keeps serving the last-good kit.
 
 ## References
 

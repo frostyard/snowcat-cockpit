@@ -74,7 +74,10 @@ terminal remains a writable credential-bearing administrative surface.
 Readiness is a list of individually actionable checks rather than one boolean.
 The node checks host tools separately from worker profiles. Structural profile
 inspection verifies provider executables and byte-exact canonical Snowcat
-skills against a locked source revision. An explicit live preflight then gives
+skills against the active source revision. The embedded release bundle is only
+the offline floor; `node up` derives ordinary active bytes from the exact
+prepared Snowcat commit and retains the prior active directory as last-good.
+An explicit live preflight then gives
 one provider access only to `list_work`, proves both intended role skills are
 visible, and records a coarse 15-minute receipt. A different provider's failure
 does not erase that readiness. Presence of configuration alone is never

@@ -51,7 +51,7 @@ The successful or failed receipt is stored at
 | `detail` | string | yes | Sanitized Cockpit-owned summary; at most 200 bytes |
 | `checkedAt` | RFC3339 timestamp | yes | When the provider invocation began |
 | `expiresAt` | RFC3339 timestamp | yes | Fifteen minutes after a success; equal to `checkedAt` after failure |
-| `kitRevision` | full Git commit ID | yes | Exact embedded Snowcat worker-kit revision |
+| `kitRevision` | full Git commit ID | yes | Exact active Snowcat worker-kit revision served to the check |
 
 ## Rules
 
@@ -59,7 +59,7 @@ The successful or failed receipt is stored at
    inference call.
 2. Cockpit MUST make `claim_work` and every other Snowcat tool unavailable to
    the preflight model. Prompt text alone is not an authority boundary.
-3. Cockpit MUST seed exact embedded skills into an ephemeral project-local
+3. Cockpit MUST seed the exact verified active skills into an ephemeral project-local
    preflight directory for both `.agents/skills` and `.claude/skills` discovery.
 4. The provider MUST inherit its existing auth and MCP configuration. Cockpit
    MUST NOT read, copy, print, or persist that configuration or its credentials.
@@ -77,7 +77,7 @@ The successful or failed receipt is stored at
 | Artifact | Derivation |
 | --- | --- |
 | `preflight` text/JSON output | Sanitized provider result and receipt timestamps |
-| Provider MCP readiness | Current receipt, current time, and locked kit revision |
+| Provider MCP readiness | Current receipt, current time, and active kit revision |
 | Dashboard profile table | `/api/v1/profiles` after receipt application |
 
 ## References

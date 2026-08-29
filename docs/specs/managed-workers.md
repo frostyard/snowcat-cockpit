@@ -98,13 +98,24 @@ HTTP operations:
    MUST NOT clone, fetch, or pull. `oci` MUST use the self-contained local
    clone defined by the [rootless OCI contract](oci-workers.md), without a
    network fetch or pull. Neither mode may mutate Snowcat during allocation.
-2. Launch MUST install the locked skills into `.agents/skills` and
-   `.claude/skills` in the isolated worktree and hide only those Cockpit-owned
-   paths from the worker's Git commands through process-local Git configuration.
-   It MUST also copy the exact running Cockpit executable to the private
+2. Launch MUST install the active skills into `.agents/skills` and
+   `.claude/skills` in a non-Snowcat isolated worktree and hide only those
+   Cockpit-owned paths from the worker's Git commands through process-local Git
+   configuration. For `frostyard/snowcat`, launch MUST instead verify and use
+   the canonical skill bytes already present at the prepared checkout commit
+   and MUST NOT create Cockpit-owned skill paths. The checkout commit MAY be
+   newer than the active kit's source commit only when every canonical skill
+   name and digest is unchanged and Git proves the active source commit is its
+   ancestor; older or divergent checkouts fail closed. The worker records the
+   active kit revision, not the unrelated newer checkout commit, as its
+   served-kit identity. It MUST also copy the exact running Cockpit executable
+   to the private
    `.agents/bin/snowcat-cockpit` path used by the role prompt, so host and OCI
    workers invoke the node's matching target and lease-relay protocols without
-   relying on `PATH` or an independently versioned image copy.
+   relying on `PATH` or an independently versioned image copy. Its Git
+   exclusions MUST name only that helper, the helper's temporary-file pattern,
+   the lifecycle and target marker files, and their temporary-file patterns;
+   tracked canonical `.agents` and `.claude` content remains visible.
 3. The role prompt MUST identify the stable worker ID, select only the role's
    exact bounded kinds, claim at most one item, and tell the provider to stop
    after reporting the result. A discoverer MUST remain read-only, select only
@@ -170,11 +181,14 @@ HTTP operations:
 8. Cleanup MUST be explicit, MUST refuse a running or dirty workspace, MUST
    remove only Cockpit skill files whose bytes match the kit the worker was
    launched with (the launch records that kit's source revision and per-skill
-   digests on the worker record; a record that predates the field is compared
-   against the node's current lock), and MUST retain a `cleaned` lifecycle
-   record. A skill file matching neither MUST be refused unless the operator
+   digests plus `cockpit` or `checkout` ownership on the worker record; a
+   record that predates the ownership field remains `cockpit`-owned), and MUST
+   retain a `cleaned` lifecycle record. A skill file matching neither MUST be
+   refused unless the operator
    passes `--discard-drifted-skills`, in which case the record names each
-   discarded skill. It MUST NOT delete the worker branch. Before deleting a
+   discarded skill. A canonical Snowcat worker records that its skills are
+   checkout-owned, and cleanup MUST NOT treat them as Cockpit-owned files. It
+   MUST NOT delete the worker branch. Before deleting a
    clean OCI checkout, it MUST import that checkout's exact worker branch into
    the source repository.
 9. Failed allocation or launch MUST remain recorded and MUST NOT trigger

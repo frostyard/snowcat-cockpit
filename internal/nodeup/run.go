@@ -47,6 +47,7 @@ type Step struct {
 type RepositoryResult struct {
 	Repository string `json:"repository"`
 	Status     string `json:"status"`
+	Source     string `json:"-"`
 	BaseCommit string `json:"baseCommit,omitempty"`
 	Detail     string `json:"detail"`
 }
@@ -111,12 +112,12 @@ type Runner struct {
 	Doctor         func() doctor.Result
 	Inspect        func(skillsDirectory string) profile.Snapshot
 	InstallKit     func(skillsDirectory string) (profile.InstallResult, error)
+	RefreshKit     func(context.Context, string, string, string, time.Time) (profile.RefreshResult, error)
 	Plan           func(nodeservice.InstallRequest) (nodeservice.InstallPlan, error)
 	Service        Service
 	Node           NodeClient
 	Preflight      func(context.Context, PreflightRequest) (state.PreflightReceipt, error)
 	ReadPreflights func(stateDirectory string) (map[string]state.PreflightReceipt, error)
-	KitRevision    string
 	Now            func() time.Time
 	ReadFile       func(string) ([]byte, error)
 	Rename         func(string, string) error
@@ -132,7 +133,7 @@ func (runner *Runner) Run(ctx context.Context) (Result, error) {
 	result := Result{ConfigPath: runner.ConfigPath, DryRun: runner.DryRun}
 	steps := []func(context.Context, *Result) error{
 		runner.stepDoctor, runner.stepKit, runner.stepInstall,
-		runner.stepRepositories, runner.stepPreflights, runner.stepCampaign, runner.stepStatus,
+		runner.stepRepositories, runner.stepSourceKit, runner.stepPreflights, runner.stepCampaign, runner.stepStatus,
 	}
 	for _, step := range steps {
 		if err := step(ctx, &result); err != nil {
@@ -145,10 +146,10 @@ func (runner *Runner) Run(ctx context.Context) (Result, error) {
 func (runner *Runner) validate() error {
 	switch {
 	case runner.Doctor == nil, runner.Inspect == nil, runner.InstallKit == nil, runner.Plan == nil,
-		runner.Service == nil, runner.Node == nil, runner.Preflight == nil, runner.ReadPreflights == nil:
+		runner.RefreshKit == nil, runner.Service == nil, runner.Node == nil, runner.Preflight == nil, runner.ReadPreflights == nil:
 		return fmt.Errorf("%w: convergence dependencies are incomplete", ErrInvalid)
-	case runner.Executable == "" || runner.Version == "" || runner.InstallRoot == "" || runner.UnitDirectory == "" || runner.KitRevision == "":
-		return fmt.Errorf("%w: executable, version, install root, unit directory, and kit revision are required", ErrInvalid)
+	case runner.Executable == "" || runner.Version == "" || runner.InstallRoot == "" || runner.UnitDirectory == "":
+		return fmt.Errorf("%w: executable, version, install root, and unit directory are required", ErrInvalid)
 	}
 	if runner.Now == nil {
 		runner.Now = time.Now
@@ -211,9 +212,16 @@ func (runner *Runner) stepKit(_ context.Context, result *Result) error {
 		runner.record(result, "kit", StepSkipped, "worker kit ready at "+shortRevision(snapshot.Kit.Revision))
 		return nil
 	case profile.StatusDrifted:
+		sourceSelected, err := profile.HasSourceSelection(skills)
+		if err != nil {
+			return runner.fail(result, "kit", err.Error())
+		}
+		if sourceSelected {
+			return runner.fail(result, "kit", "source-backed worker kit integrity failed; repair or reselect a verified generation")
+		}
 		aside := fmt.Sprintf("%s.pre-%s.%s", skills, sanitizeVersion(runner.Version), runner.Now().UTC().Format("20060102T150405Z"))
 		if runner.DryRun {
-			runner.record(result, "kit", StepPlanned, fmt.Sprintf("would move the drifted kit aside to %s and install revision %s", filepath.Base(aside), shortRevision(runner.KitRevision)))
+			runner.record(result, "kit", StepPlanned, fmt.Sprintf("would move the drifted kit aside to %s and install the embedded offline floor", filepath.Base(aside)))
 			return nil
 		}
 		if err := runner.Rename(skills, aside); err != nil {
@@ -223,18 +231,20 @@ func (runner *Runner) stepKit(_ context.Context, result *Result) error {
 		if err != nil {
 			return runner.fail(result, "kit", fmt.Sprintf("install worker kit: %v", err))
 		}
-		runner.record(result, "kit", StepOK, fmt.Sprintf("drifted kit retained as %s; installed revision %s (%s)", filepath.Base(aside), shortRevision(runner.KitRevision), installed.Status))
+		refreshed := runner.Inspect(skills)
+		runner.record(result, "kit", StepOK, fmt.Sprintf("drifted kit retained as %s; installed offline-floor revision %s (%s)", filepath.Base(aside), shortRevision(refreshed.Kit.Revision), installed.Status))
 		return nil
 	default:
 		if runner.DryRun {
-			runner.record(result, "kit", StepPlanned, "would install worker kit revision "+shortRevision(runner.KitRevision))
+			runner.record(result, "kit", StepPlanned, "would install the embedded worker-kit offline floor")
 			return nil
 		}
 		installed, err := runner.InstallKit(skills)
 		if err != nil {
 			return runner.fail(result, "kit", fmt.Sprintf("install worker kit: %v", err))
 		}
-		runner.record(result, "kit", StepOK, fmt.Sprintf("installed worker kit revision %s (%s)", shortRevision(runner.KitRevision), installed.Status))
+		refreshed := runner.Inspect(skills)
+		runner.record(result, "kit", StepOK, fmt.Sprintf("installed offline-floor worker kit revision %s (%s)", shortRevision(refreshed.Kit.Revision), installed.Status))
 		return nil
 	}
 }
@@ -360,7 +370,49 @@ func (runner *Runner) converge(ctx context.Context, repository string) Repositor
 	if err != nil {
 		return RepositoryResult{Repository: repository, Status: managedrepo.StatusFailed, Detail: "setup: " + err.Error()}
 	}
-	return RepositoryResult{Repository: record.Repository, Status: record.Status, BaseCommit: record.BaseCommit, Detail: record.Detail}
+	return RepositoryResult{Repository: record.Repository, Status: record.Status, Source: record.Source, BaseCommit: record.BaseCommit, Detail: record.Detail}
+}
+
+func (runner *Runner) stepSourceKit(ctx context.Context, result *Result) error {
+	if runner.DryRun {
+		for _, repository := range runner.Config.Repositories {
+			if strings.EqualFold(repository, "frostyard/snowcat") {
+				runner.record(result, "source-kit", StepPlanned, "would refresh the worker kit from the exact managed Snowcat revision")
+				return nil
+			}
+		}
+		runner.record(result, "source-kit", StepSkipped, "frostyard/snowcat is not declared; would retain the embedded or last-good worker kit")
+		return nil
+	}
+	for _, repository := range result.Repositories {
+		if !strings.EqualFold(repository.Repository, "frostyard/snowcat") {
+			continue
+		}
+		if repository.Status != managedrepo.StatusReady || repository.Source == "" || repository.BaseCommit == "" {
+			runner.record(result, "source-kit", StepSkipped, "managed Snowcat source is unavailable; retained the last-good worker kit")
+			return nil
+		}
+		refreshed, err := runner.RefreshKit(ctx, repository.Source, repository.BaseCommit, runner.Config.SkillsDirectory(), runner.Now())
+		if err != nil {
+			if errors.Is(err, profile.ErrSourceUnavailable) {
+				runner.record(result, "source-kit", StepSkipped, "managed Snowcat skill bytes are unavailable; retained the last-good worker kit")
+				return nil
+			}
+			return runner.fail(result, "source-kit", err.Error())
+		}
+		if refreshed.PreviousRevision == refreshed.Revision {
+			runner.record(result, "source-kit", StepSkipped, "worker kit already serves managed Snowcat revision "+shortRevision(refreshed.Revision))
+			return nil
+		}
+		detail := fmt.Sprintf("refreshed worker kit from managed Snowcat revision %s", shortRevision(refreshed.Revision))
+		if refreshed.RetainedDirectory != "" {
+			detail += "; retained " + filepath.Base(refreshed.RetainedDirectory)
+		}
+		runner.record(result, "source-kit", StepOK, detail)
+		return nil
+	}
+	runner.record(result, "source-kit", StepSkipped, "frostyard/snowcat is not declared; retained the embedded or last-good worker kit")
+	return nil
 }
 
 func (runner *Runner) stepPreflights(ctx context.Context, result *Result) error {
@@ -369,11 +421,23 @@ func (runner *Runner) stepPreflights(ctx context.Context, result *Result) error 
 	if err != nil {
 		return runner.fail(result, "preflight", "read preflight receipts: "+err.Error())
 	}
+	if runner.DryRun {
+		names := make([]string, 0, len(config.LanePairs()))
+		for _, pair := range config.LanePairs() {
+			names = append(names, pair.Provider+"/"+pair.MCPServer)
+		}
+		runner.record(result, "preflight", StepPlanned, "would prove "+strings.Join(names, ", "))
+		return nil
+	}
 	now := runner.Now().UTC()
+	kit := runner.Inspect(config.SkillsDirectory()).Kit
+	if kit.Status != profile.StatusReady {
+		return runner.fail(result, "preflight", "active worker kit is not ready")
+	}
 	var pending []LanePair
 	for _, pair := range config.LanePairs() {
 		receipt, ok := existing[pair.Provider]
-		if ok && receipt.Status == profile.StatusReady && receipt.MCPServer == pair.MCPServer && receipt.KitRevision == runner.KitRevision && receipt.ExpiresAt.After(now) {
+		if ok && receipt.Status == profile.StatusReady && receipt.MCPServer == pair.MCPServer && receipt.KitRevision == kit.Revision && receipt.ExpiresAt.After(now) {
 			result.Preflights = append(result.Preflights, PreflightResult{Provider: pair.Provider, MCPServer: pair.MCPServer, Status: receipt.Status, Detail: "current receipt reused", ExpiresAt: receipt.ExpiresAt})
 			continue
 		}
@@ -386,10 +450,6 @@ func (runner *Runner) stepPreflights(ctx context.Context, result *Result) error 
 	names := make([]string, 0, len(pending))
 	for _, pair := range pending {
 		names = append(names, pair.Provider+"/"+pair.MCPServer)
-	}
-	if runner.DryRun {
-		runner.record(result, "preflight", StepPlanned, "would prove "+strings.Join(names, ", "))
-		return nil
 	}
 	var failed []string
 	for _, pair := range pending {
