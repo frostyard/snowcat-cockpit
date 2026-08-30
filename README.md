@@ -36,8 +36,16 @@ creating state or claiming work:
 ```bash
 go run ./cmd/snowcat-cockpit doctor
 go run ./cmd/snowcat-cockpit doctor --json
-go run ./cmd/snowcat-cockpit install-kit
 go run ./cmd/snowcat-cockpit profiles
+```
+
+`install-kit` is not an inspection command: it materializes the locked
+Snowcat worker kit on disk in the selected `--skills-dir` (default
+`$HOME/.agents/skills`), writing any file the kit is missing there. It
+never replaces a file whose content differs from the lock:
+
+```bash
+go run ./cmd/snowcat-cockpit install-kit
 ```
 
 Prove one provider can see the locked skills and reach Snowcat without giving
