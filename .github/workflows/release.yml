@@ -7,7 +7,49 @@ on:
 permissions: {}
 
 jobs:
+  # The canonical repository gate, run against the tag commit before anything
+  # publish-capable starts (core ADR-0038). It is a separate job so it runs
+  # with `contents: read` only: the release job's write, id-token, and
+  # attestations scopes are never granted to the gate, and `needs` makes a red
+  # gate stop the release before GoReleaser can publish. The toolchain is
+  # provisioned exactly as the Tests repository gate provisions it — Go from
+  # go.mod, tmux for the shell integration tests, and the mise.toml/mise.lock
+  # pins of actionlint and golangci-lint — so the two gates cannot drift.
+  gate:
+    name: Repository gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install system test tools
+        run: sudo apt-get update && sudo apt-get install --yes tmux
+
+      - name: Install pinned tools
+        uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          install: true
+          install_args: actionlint golangci-lint
+          cache: true
+
+      - name: Check pinned golangci-lint
+        run: make lint-version-check
+
+      - name: Run canonical gate
+        run: make ci
+
   release:
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
