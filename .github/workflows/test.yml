@@ -140,7 +140,7 @@ jobs:
       # verified downloads the tag-triggered publish job in
       # worker-images.yml uses, so a broken build fails here first.
       - name: Build worker image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: oci/Containerfile
