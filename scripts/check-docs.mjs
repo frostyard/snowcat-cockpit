@@ -92,6 +92,31 @@ for (const path of symlinks) {
   }
 }
 
+// The README's non-mutating "inspect this machine" quick-start block must
+// never present install-kit as an inspection command: it materializes the
+// locked worker kit on disk and is documented separately, right after that
+// block.
+const readmeText = readFileSync(join(root, "README.md"), "utf8");
+const inspectionIntro = "creating state or claiming work:";
+const introIndex = readmeText.indexOf(inspectionIntro);
+if (introIndex === -1) {
+  failures.push("readme: quick-start no-state-creation intro sentence is missing");
+} else {
+  const fenceStart = readmeText.indexOf("```bash", introIndex);
+  const fenceEnd = readmeText.indexOf("```", fenceStart + "```bash".length);
+  if (fenceStart === -1 || fenceEnd === -1) {
+    failures.push("readme: quick-start no-state-creation code block is missing");
+  } else {
+    const inspectionBlock = readmeText.slice(fenceStart, fenceEnd);
+    if (inspectionBlock.includes("install-kit")) {
+      failures.push("readme: install-kit is presented as a non-mutating inspection command");
+    }
+  }
+}
+if (!readmeText.includes("`--skills-dir` (default\n`$HOME/.agents/skills`)")) {
+  failures.push("readme: install-kit's materialized default --skills-dir is not documented");
+}
+
 const metric = readFileSync(join(root, "docs/specs/pr-acceptance-metric.md"), "utf8");
 for (const heading of ["## Definition", "## Rules"]) {
   if (!metric.split("\n").includes(heading)) failures.push(`pin: PR acceptance metric is missing ${heading}`);
