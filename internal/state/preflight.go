@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	preflightDirectory = "preflights"
-	preflightVersion   = 1
+	preflightDirectory      = "preflights"
+	preflightVersion        = 1
+	maxPreflightReceiptSize = 16 * 1024
 )
 
 var (
@@ -108,15 +109,29 @@ func ReadPreflights(directory string) (map[string]PreflightReceipt, error) {
 }
 
 func readPreflight(path string) (PreflightReceipt, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return PreflightReceipt{}, err
+	}
+	if info.Size() > maxPreflightReceiptSize {
+		return PreflightReceipt{}, fmt.Errorf("preflight receipt exceeds %d byte limit", maxPreflightReceiptSize)
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return PreflightReceipt{}, err
 	}
 	defer file.Close()
-	decoder := json.NewDecoder(io.LimitReader(file, 16*1024))
+	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
 	var receipt PreflightReceipt
 	if err := decoder.Decode(&receipt); err != nil {
+		return PreflightReceipt{}, fmt.Errorf("decode preflight receipt: %w", err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return PreflightReceipt{}, errors.New("preflight receipt contains trailing content")
+		}
 		return PreflightReceipt{}, fmt.Errorf("decode preflight receipt: %w", err)
 	}
 	if err := validatePreflight(receipt); err != nil {
